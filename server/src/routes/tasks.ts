@@ -1,0 +1,452 @@
+import { randomUUID } from 'node:crypto'
+import type { FastifyInstance } from 'fastify'
+import { getDb } from '../storage/db.js'
+import { getProviderFromEnv, isProviderName, type ProviderName } from '../providers/index.js'
+import { createRegistrySnapshot } from '../runtime/registry-snapshot-builder.js'
+import type { RegistrySnapshot } from '../runtime/registry-snapshot.js'
+import { parseRegistrySnapshot, serializeRegistrySnapshot } from '../runtime/registry-snapshot.js'
+import { loadAgentProfile } from '../runtime/prompt-loader.js'
+import { persistTaskLongTermMemories } from '../memory/task-memory-extractor.js'
+import { createPlan } from '../orchestrator/planner.js'
+import { validatePlan } from '../orchestrator/plan-validator.js'
+import { executePlan } from '../orchestrator/scheduler.js'
+import { aggregateResults } from '../orchestrator/aggregator.js'
+import type { TaskExecutionEvent, TaskStatus } from '../orchestrator/types.js'
+import { cancelPipelineTaskRuntime } from '../pipelines/engine.js'
+import {
+  addTaskSseSubscriber,
+  broadcastTaskEvent,
+  clearTaskSseSubscribers,
+  deleteTaskRuntime,
+  removeTaskSseSubscriber,
+  persistTaskExecutionEvent,
+  toClientTaskStepId,
+  updateTaskStatus,
+  updateTaskStepSummary,
+  upsertTaskStep,
+} from '../tasks/runtime-store.js'
+
+const MAX_PLAN_RETRIES = 2
+
+interface TaskTeamMemberInput {
+  agentId: string
+  provider: string
+  model: string
+}
+
+interface CreateTaskBody {
+  objective: string
+  teamMembers: TaskTeamMemberInput[]
+}
+
+interface TaskRow {
+  id: string
+  status: string
+  kind: string
+  team_members: string
+  objective: string
+  plan: string | null
+  registry_snapshot: string | null
+  pipeline_id: string | null
+  pipeline_version: number | null
+  result: string | null
+  error: string | null
+  created_at: number
+  updated_at: number
+}
+
+interface TaskStepRow {
+  id: string
+  task_id: string
+  agent_id: string
+  status: string
+  objective: string
+  result: string | null
+  error: string | null
+  summary: string | null
+  token_count: number | null
+  started_at: number | null
+  completed_at: number | null
+}
+
+/**
+ * 异步执行整个编排流程（规划 -> 校验 -> 调度 -> 汇总），不阻塞 HTTP 响应
+ */
+async function runOrchestration(params: {
+  taskId: string
+  objective: string
+  teamMembersInput: TaskTeamMemberInput[]
+  snapshot: RegistrySnapshot
+}): Promise<void> {
+  const { taskId, objective, teamMembersInput, snapshot } = params
+
+  try {
+    // 构建 planner 需要的团队信息（从 runtime-profiles 获取）
+    const plannerTeam = teamMembersInput.map((m) => {
+      try {
+        const profile = loadAgentProfile(m.agentId)
+        return {
+          agentId: m.agentId,
+          name: profile.name,
+          description: profile.planningHints.join('; '),
+          division: profile.division,
+        }
+      } catch {
+        return {
+          agentId: m.agentId,
+          name: m.agentId,
+          description: 'AI assistant',
+          division: 'general',
+        }
+      }
+    })
+
+    // 选择 planner 使用的 provider（用第一个有效成员的 provider）
+    const firstMember = teamMembersInput[0]
+    if (!firstMember) throw new Error('teamMembers is empty')
+
+    const plannerProvider = getProviderFromEnv(firstMember.provider as ProviderName)
+    const availableAgentIds = new Set(teamMembersInput.map((m) => m.agentId))
+
+    updateTaskStatus(taskId, 'planning')
+
+    // Repair loop：最多重试 MAX_PLAN_RETRIES 次
+    let plan = null
+    let repairHints: string | undefined
+    let lastValidationErrors: string[] = []
+
+    for (let attempt = 0; attempt <= MAX_PLAN_RETRIES; attempt++) {
+      const rawPlan = await createPlan({
+        taskId,
+        objective,
+        teamMembers: plannerTeam,
+        provider: plannerProvider,
+        model: firstMember.model,
+        snapshot,
+        repairHints,
+      })
+
+      const validation = validatePlan(rawPlan, availableAgentIds)
+      if (validation.valid && validation.plan) {
+        plan = validation.plan
+        break
+      }
+
+      lastValidationErrors = validation.errors.map((e) => `[${e.code}] ${e.message}`)
+      repairHints = lastValidationErrors.join('\n')
+
+      if (attempt === MAX_PLAN_RETRIES) {
+        throw new Error(`Plan validation failed after ${MAX_PLAN_RETRIES + 1} attempts:\n${repairHints}`)
+      }
+    }
+
+    if (!plan) {
+      throw new Error('Failed to produce a valid plan')
+    }
+
+    updateTaskStatus(taskId, 'running', { plan: JSON.stringify(plan) })
+
+    // 预插入所有 step 记录（pending 状态）
+    for (const step of plan.steps) {
+      upsertTaskStep({
+        taskId,
+        stepId: step.id,
+        agentId: step.assignee,
+        objective: step.objective,
+        status: 'pending',
+      })
+    }
+
+    // 执行 DAG 调度
+    const stepResults = await executePlan({
+      plan,
+      teamMembers: teamMembersInput.map((m) => ({
+        agentId: m.agentId,
+        provider: m.provider,
+        model: m.model,
+      })),
+      providerFactory: (providerName) => getProviderFromEnv(providerName as ProviderName),
+      snapshot,
+      onEvent: (event) => {
+        if (event.type !== 'task_completed' && event.type !== 'task_failed') {
+          broadcastTaskEvent(taskId, event)
+        }
+        persistTaskExecutionEvent(taskId, plan!, event)
+      },
+    })
+
+    for (const result of stepResults.values()) {
+      updateTaskStepSummary(taskId, result.stepId, result.summary ?? null)
+    }
+
+    // 汇总结果
+    const aggregatorProvider = getProviderFromEnv(firstMember.provider as ProviderName)
+    const finalReport = await aggregateResults({
+      taskId,
+      objective,
+      plan,
+      stepResults,
+      provider: aggregatorProvider,
+      model: firstMember.model,
+      snapshot,
+    })
+
+    // 判断整体是否有失败步骤
+    const hasFailedStep = [...stepResults.values()].some((r) => r.error)
+    const finalStatus: TaskStatus = hasFailedStep ? 'failed' : 'completed'
+
+    if (finalStatus === 'completed' && finalReport) {
+      try {
+        await persistTaskLongTermMemories({
+          taskId,
+          taskObjective: objective,
+          plan,
+          stepResults,
+          report: finalReport,
+          provider: aggregatorProvider,
+          model: firstMember.model,
+        })
+      } catch {
+        // 记忆写入失败不影响任务终态
+      }
+    }
+
+    updateTaskStatus(taskId, finalStatus, { result: finalReport })
+
+    const completionEvent: TaskExecutionEvent = {
+      type: hasFailedStep ? 'task_failed' : 'task_completed',
+      taskId,
+      output: finalReport,
+      timestamp: Date.now(),
+    }
+    broadcastTaskEvent(taskId, completionEvent)
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err)
+    updateTaskStatus(taskId, 'failed', { error: errorMsg })
+
+    const failEvent: TaskExecutionEvent = {
+      type: 'task_failed',
+      taskId,
+      error: errorMsg,
+      timestamp: Date.now(),
+    }
+    broadcastTaskEvent(taskId, failEvent)
+  } finally {
+    // 清理 SSE 客户端（延迟 10s，让客户端有时间收到最终事件）
+    setTimeout(() => {
+      clearTaskSseSubscribers(taskId)
+    }, 10_000)
+  }
+}
+
+export async function tasksRoutes(app: FastifyInstance): Promise<void> {
+  // POST /api/tasks - 创建并异步执行编排任务
+  app.post<{ Body: CreateTaskBody }>('/tasks', async (request, reply) => {
+    const { objective, teamMembers } = request.body
+
+    if (!objective?.trim()) {
+      return reply.status(400).send({ error: 'objective is required and cannot be empty' })
+    }
+    if (!Array.isArray(teamMembers) || teamMembers.length === 0) {
+      return reply.status(400).send({ error: 'teamMembers must be a non-empty array' })
+    }
+    for (const m of teamMembers) {
+      if (!m.agentId || !m.provider || !m.model) {
+        return reply.status(400).send({ error: 'Each teamMember must have agentId, provider, and model' })
+      }
+      if (!isProviderName(m.provider)) {
+        return reply.status(400).send({ error: `Unknown provider: ${m.provider}` })
+      }
+    }
+
+    const db = getDb()
+    const taskId = randomUUID()
+    const now = Date.now()
+    const snapshot = createRegistrySnapshot()
+
+    db.prepare(
+      `INSERT INTO tasks (id, status, kind, team_members, objective, registry_snapshot, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      taskId,
+      'pending',
+      'orchestration',
+      JSON.stringify(teamMembers),
+      objective.trim(),
+      serializeRegistrySnapshot(snapshot),
+      now,
+      now,
+    )
+
+    // 异步启动编排（不 await）
+    void runOrchestration({
+      taskId,
+      objective: objective.trim(),
+      teamMembersInput: teamMembers,
+      snapshot,
+    })
+
+    return reply.status(202).send({
+      id: taskId,
+      status: 'pending',
+      objective: objective.trim(),
+      createdAt: now,
+    })
+  })
+
+  // GET /api/tasks - 获取最近 20 个任务历史
+  app.get('/tasks', async (_request, reply) => {
+    const db = getDb()
+    const rows = db
+      .prepare<[], TaskRow>(
+        `SELECT id, status, kind, objective, plan, result, error, created_at, updated_at
+         FROM tasks
+         ORDER BY created_at DESC
+         LIMIT 20`,
+      )
+      .all()
+
+    return reply.send(
+      rows.map((r) => ({
+        id: r.id,
+        status: r.status,
+        kind: r.kind,
+        objective: r.objective,
+        hasPlan: r.plan !== null,
+        hasResult: r.result !== null,
+        error: r.error,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+      })),
+    )
+  })
+
+  // GET /api/tasks/:id - 获取任务状态和完整结果
+  app.get<{ Params: { id: string } }>('/tasks/:id', async (request, reply) => {
+    const { id } = request.params
+    const db = getDb()
+
+    const task = db.prepare<[string], TaskRow>(`SELECT * FROM tasks WHERE id = ?`).get(id)
+    if (!task) {
+      return reply.status(404).send({ error: `Task not found: ${id}` })
+    }
+
+    const steps = db
+      .prepare<[string], TaskStepRow>(
+        `SELECT * FROM task_steps WHERE task_id = ? ORDER BY started_at ASC`,
+      )
+      .all(id)
+
+    return reply.send({
+      id: task.id,
+      status: task.status,
+      kind: task.kind,
+      objective: task.objective,
+      plan: task.plan ? (JSON.parse(task.plan) as unknown) : null,
+      registrySnapshot: parseRegistrySnapshot(task.registry_snapshot),
+      pipelineId: task.pipeline_id,
+      pipelineVersion: task.pipeline_version,
+      result: task.result,
+      error: task.error,
+      teamMembers: JSON.parse(task.team_members) as unknown,
+      createdAt: task.created_at,
+      updatedAt: task.updated_at,
+      steps: steps.map((s) => ({
+        id: toClientTaskStepId(task.id, s.id),
+        agentId: s.agent_id,
+        status: s.status,
+        objective: s.objective,
+        result: s.result,
+        summary: s.summary,
+        error: s.error,
+        tokenCount: s.token_count,
+        startedAt: s.started_at,
+        completedAt: s.completed_at,
+      })),
+    })
+  })
+
+  // GET /api/tasks/:id/stream - SSE 实时推送 TaskExecutionEvent
+  app.get<{ Params: { id: string } }>('/tasks/:id/stream', async (request, reply) => {
+    const { id } = request.params
+    const db = getDb()
+    const origin = request.headers.origin
+    const allowLocalOrigin =
+      typeof origin === 'string' && /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)
+
+    const task = db
+      .prepare<[string], { id: string; status: string; result: string | null; error: string | null }>(
+        `SELECT id, status, result, error FROM tasks WHERE id = ?`,
+      )
+      .get(id)
+    if (!task) {
+      return reply.status(404).send({ error: `Task not found: ${id}` })
+    }
+
+    reply.raw.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+      ...(allowLocalOrigin
+        ? {
+            'Access-Control-Allow-Origin': origin,
+            Vary: 'Origin',
+          }
+        : {}),
+    })
+
+    const send = (data: string) => {
+      reply.raw.write(`data: ${data}\n\n`)
+    }
+
+    // 如果任务已终态，直接发送一次性状态事件关闭
+    if (task.status === 'completed' || task.status === 'failed') {
+      const eventType = task.status === 'completed' ? 'task_completed' : 'task_failed'
+      send(
+        JSON.stringify({
+          type: eventType,
+          taskId: id,
+          output: task.result ?? undefined,
+          error: task.error ?? undefined,
+          timestamp: Date.now(),
+        }),
+      )
+      reply.raw.end()
+      return
+    }
+
+    // 注册 SSE 订阅者
+    addTaskSseSubscriber(id, send)
+
+    const cleanup = () => {
+      removeTaskSseSubscriber(id, send)
+    }
+
+    request.raw.on('close', cleanup)
+    request.raw.on('error', cleanup)
+
+    // 保持连接开启（Fastify 不自动关闭）
+    await new Promise<void>((resolve) => {
+      request.raw.on('close', resolve)
+      request.raw.on('error', resolve)
+    })
+  })
+
+  // DELETE /api/tasks/:id - 删除任务记录
+  app.delete<{ Params: { id: string } }>('/tasks/:id', async (request, reply) => {
+    const { id } = request.params
+    const db = getDb()
+
+    const task = db.prepare<[string], { id: string }>(`SELECT id FROM tasks WHERE id = ?`).get(id)
+    if (!task) {
+      return reply.status(404).send({ error: `Task not found: ${id}` })
+    }
+
+    deleteTaskRuntime(id)
+    cancelPipelineTaskRuntime(id)
+    clearTaskSseSubscribers(id)
+
+    return reply.status(204).send()
+  })
+}

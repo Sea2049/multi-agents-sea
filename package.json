@@ -1,0 +1,95 @@
+{
+  "name": "agency-agents-desktop",
+  "version": "1.0.0",
+  "description": "Premium desktop command center for exploring and orchestrating Agency Agents.",
+  "author": "BOB",
+  "license": "MIT",
+  "copyright": "Copyright © 2026 BOB",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "vite",
+    "prebuild": "npm run generate:agent-content && npm run build:profiles",
+    "build": "tsc && vite build",
+    "build:profiles": "node scripts/build-agent-runtime-profiles.mjs",
+    "brand:assets": "node scripts/generate-brand-assets.mjs",
+    "generate:agent-content": "node scripts/generate-agent-content.mjs",
+    "electron:dev": "npm run --prefix server build && concurrently -k -n RENDERER,ELECTRON -c green,blue \"vite\" \"wait-on http://127.0.0.1:5173 && electron .\"",
+    "preelectron:build": "npm run brand:assets",
+    "electron:build": "npm run build && electron-builder --win zip --publish never",
+    "preelectron:build:installer": "npm run brand:assets",
+    "electron:build:installer": "npm run build && node scripts/run-electron-builder-installer.mjs",
+    "preview": "vite preview",
+    "server:build": "npm run --prefix server build",
+    "server:test": "npm run --prefix server test",
+    "server:test:coverage": "npm run --prefix server test:coverage"
+  },
+  "dependencies": {
+    "framer-motion": "^11.0.0",
+    "lucide-react": "^0.400.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "autoprefixer": "^10.4.19",
+    "bmp-js": "^0.1.0",
+    "concurrently": "^8.2.0",
+    "electron": "^30.0.0",
+    "electron-builder": "^24.0.0",
+    "postcss": "^8.4.38",
+    "sharp": "^0.34.5",
+    "tailwindcss": "^3.4.0",
+    "to-ico": "^1.1.5",
+    "typescript": "^5.5.0",
+    "vite": "^5.4.0",
+    "wait-on": "^7.2.0"
+  },
+  "build": {
+    "appId": "com.agencyagents.desktop",
+    "productName": "Agency Agents Desktop",
+    "asar": true,
+    "npmRebuild": false,
+    "electronDist": "node_modules/electron/dist",
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "buildResources/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release",
+      "buildResources": "buildResources"
+    },
+    "icon": "buildResources/icon.ico",
+    "win": {
+      "signAndEditExecutable": false,
+      "icon": "buildResources/icon.ico",
+      "target": [
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "Agency Agents Desktop",
+      "installerIcon": "buildResources/icon.ico",
+      "uninstallerIcon": "buildResources/icon.ico",
+      "installerHeaderIcon": "buildResources/icon.ico",
+      "installerSidebar": "buildResources/installer-sidebar.bmp",
+      "uninstallDisplayName": "Agency Agents Desktop"
+    }
+  }
+}

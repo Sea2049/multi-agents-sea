@@ -1,0 +1,3 @@
+
+$env:PROVIDER_MINIMAX_KEY = "sk-cp--FW1dFnz5zcbL23Q4JDSP8vpAjsNFF7KMhUpLb51TSCgwiDFlUJjPGsvgpmqcCLVD0JWOzKenUD4sZ27WFLwCVuYGi3hrgMcZB6X429xtAvmML3fDuaiu2A"
+$env:PROVIDER_MINIMAX_URL = "https://api.minimaxi.com/anthropic"
