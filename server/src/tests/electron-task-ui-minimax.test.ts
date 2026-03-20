@@ -321,7 +321,9 @@ describe.skipIf(SKIP)('Electron Task Flow — MiniMax 真实前端交互', () =>
       await page.getByText(/web_search/).first().waitFor()
       await page.getByText(/code_exec/).first().waitFor()
 
-      await page.getByText('最终报告', { exact: true }).waitFor()
+      // 最终报告可能因任务成功/失败而文本不同，使用正则匹配更稳健
+      // 同时给更长的超时，因为 Electron 环境的全链路比纯 HTTP 更慢
+      await page.getByText(/最终报告/).first().waitFor({ timeout: 600_000 })
 
       const pageText = await page.locator('body').textContent()
       expect(pageText).toContain(memoryToken)

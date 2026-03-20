@@ -342,11 +342,13 @@ async function runPipelineTask(params: {
     broadcastTaskEvent(taskId, completionEvent)
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error)
-    updateTaskStatus(taskId, 'failed', { error: errorMessage })
+    const fallbackOutput = `# Pipeline 执行报告\n\n**状态:** Pipeline 执行过程中发生错误\n\n**错误详情:** ${errorMessage}`
+    updateTaskStatus(taskId, 'failed', { error: errorMessage, result: fallbackOutput })
     broadcastTaskEvent(taskId, {
       type: 'task_failed',
       taskId,
       error: errorMessage,
+      output: fallbackOutput,
       timestamp: Date.now(),
     })
   } finally {

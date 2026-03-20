@@ -10,8 +10,14 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 
 const BUNDLED_SKILLS_DIR = join(__dirname, 'bundled')
-const USER_SKILLS_DIR = join(homedir(), '.sea', 'skills')
-const WORKSPACE_SKILLS_DIR = join(process.cwd(), 'skills')
+
+function getUserSkillsDir(): string {
+  return process.env['SEA_USER_SKILLS_DIR']?.trim() || join(homedir(), '.sea', 'skills')
+}
+
+function getWorkspaceSkillsDir(): string {
+  return process.env['SEA_WORKSPACE_SKILLS_DIR']?.trim() || join(process.cwd(), 'skills')
+}
 
 async function pathExists(path: string): Promise<boolean> {
   try {
@@ -213,8 +219,8 @@ function sortSkillsByPrecedence(skills: SkillDefinition[]): SkillDefinition[] {
 
 export async function loadAllSkills(): Promise<SkillDefinition[]> {
   const [workspaceSkills, userSkills, bundledSkills] = await Promise.all([
-    loadSkillsForSource(WORKSPACE_SKILLS_DIR, 'workspace'),
-    loadSkillsForSource(USER_SKILLS_DIR, 'user'),
+    loadSkillsForSource(getWorkspaceSkillsDir(), 'workspace'),
+    loadSkillsForSource(getUserSkillsDir(), 'user'),
     loadSkillsForSource(BUNDLED_SKILLS_DIR, 'bundled'),
   ])
 
@@ -229,5 +235,5 @@ export async function loadAllSkills(): Promise<SkillDefinition[]> {
 }
 
 export function getSkillDiscoveryRoots(): string[] {
-  return [WORKSPACE_SKILLS_DIR, USER_SKILLS_DIR, BUNDLED_SKILLS_DIR]
+  return [getWorkspaceSkillsDir(), getUserSkillsDir(), BUNDLED_SKILLS_DIR]
 }

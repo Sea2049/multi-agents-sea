@@ -74,6 +74,19 @@ describe('PlanValidator', () => {
     expect(result.errors[0].code).toBe('CIRCULAR_DEPENDENCY')
   })
 
+  it('should fail for unknown dependency references', () => {
+    const plan: TaskPlan = {
+      ...validPlan,
+      steps: [
+        validPlan.steps[0],
+        { ...validPlan.steps[1], dependsOn: ['missing-step'] },
+      ],
+    }
+    const result = validatePlan(plan, availableAgents)
+    expect(result.valid).toBe(false)
+    expect(result.errors[0].code).toBe('UNKNOWN_DEPENDENCY')
+  })
+
   it('should fail for missing required fields', () => {
     const plan = {
       ...validPlan,

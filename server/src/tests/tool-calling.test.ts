@@ -83,6 +83,12 @@ describe('file_read tool', () => {
     expect(result).toContain('Access denied')
   })
 
+  it('should deny sibling paths that only share the workspace prefix', async () => {
+    setWorkspaceRoot('e:\\trae\\multi-agents-sea')
+    const result = await executeFileRead({ path: '..\\multi-agents-sea-secret\\note.txt' })
+    expect(result).toContain('Access denied')
+  })
+
   it('should deny sensitive file patterns', async () => {
     setWorkspaceRoot('e:\\trae\\multi-agents-sea')
     const result = await executeFileRead({ path: '.env' })

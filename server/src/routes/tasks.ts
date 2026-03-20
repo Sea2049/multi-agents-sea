@@ -222,12 +222,15 @@ async function runOrchestration(params: {
     broadcastTaskEvent(taskId, completionEvent)
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : String(err)
-    updateTaskStatus(taskId, 'failed', { error: errorMsg })
+    // 构建最小化的降级报告，确保前端 ResultAggregator 能显示最终报告区域
+    const fallbackOutput = `# 任务执行报告\n\n**状态:** 任务执行过程中发生错误\n\n**错误详情:** ${errorMsg}`
+    updateTaskStatus(taskId, 'failed', { error: errorMsg, result: fallbackOutput })
 
     const failEvent: TaskExecutionEvent = {
       type: 'task_failed',
       taskId,
       error: errorMsg,
+      output: fallbackOutput,
       timestamp: Date.now(),
     }
     broadcastTaskEvent(taskId, failEvent)
