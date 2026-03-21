@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { AlertTriangle, Ban, CheckCircle2, Download, RefreshCw, Search, ShieldAlert, Tag } from 'lucide-react'
-import { apiClient, type SkillMarketEntry, type SkillMarketPreview, type SkillRecord } from '../../lib/api-client'
+import {
+  apiClient,
+  type ApiClientHttpError,
+  type SkillMarketEntry,
+  type SkillMarketPreview,
+  type SkillRecord,
+} from '../../lib/api-client'
 
 function TagBadge({ tag }: { tag: string }) {
   return (
@@ -16,6 +22,7 @@ export function SkillMarketView() {
   const [displayEntries, setDisplayEntries] = useState<SkillMarketEntry[]>([])
   const [installedSkills, setInstalledSkills] = useState<SkillRecord[]>([])
   const [previewMap, setPreviewMap] = useState<Record<string, SkillMarketPreview>>({})
+  const [previewErrorMap, setPreviewErrorMap] = useState<Record<string, { message: string; retryable: boolean }>>({})
   const [loading, setLoading] = useState(true)
   const [searching, setSearching] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -40,6 +47,26 @@ export function SkillMarketView() {
     }
   }, [])
 
+  const parseMarketError = useCallback((raw: unknown, fallback: string): { message: string; retryable: boolean } => {
+    if (!(raw instanceof Error)) {
+      return { message: fallback, retryable: false }
+    }
+    const maybeHttpError = raw as ApiClientHttpError
+    if (maybeHttpError.payload?.error && maybeHttpError.payload.error.trim()) {
+      const retryable = typeof maybeHttpError.payload.retryable === 'boolean'
+        ? maybeHttpError.payload.retryable
+        : (maybeHttpError.status === 429 || (maybeHttpError.status ?? 0) >= 500)
+      return {
+        message: maybeHttpError.payload.error,
+        retryable,
+      }
+    }
+    return {
+      message: normalizeError(raw, fallback),
+      retryable: maybeHttpError.status === 429,
+    }
+  }, [normalizeError])
+
   const loadData = useCallback(async () => {
     setLoading(true)
     setError(null)
@@ -52,6 +79,7 @@ export function SkillMarketView() {
       setDisplayEntries(index)
       setInstalledSkills(installed.skills)
       setPreviewMap({})
+      setPreviewErrorMap({})
     } catch (err) {
       setError(normalizeError(err, '加载 Skill 市场失败'))
     } finally {
@@ -97,12 +125,23 @@ export function SkillMarketView() {
     try {
       const preview = await apiClient.skills.previewMarket(entry.provider, entry.providerSkillId)
       setPreviewMap((prev) => ({ ...prev, [entry.id]: preview }))
+      setPreviewErrorMap((prev) => {
+        if (!(entry.id in prev)) return prev
+        const next = { ...prev }
+        delete next[entry.id]
+        return next
+      })
     } catch (err) {
-      setError(normalizeError(err, `预检 "${entry.name}" 失败`))
+      const parsed = parseMarketError(err, `预检 "${entry.name}" 失败`)
+      setPreviewErrorMap((prev) => ({
+        ...prev,
+        [entry.id]: parsed,
+      }))
+      setError(parsed.message)
     } finally {
       setBusyId(null)
     }
-  }, [normalizeError])
+  }, [parseMarketError])
 
   const handleInstall = useCallback(async (entry: SkillMarketEntry) => {
     setBusyId(`install:${entry.id}`)
@@ -111,11 +150,12 @@ export function SkillMarketView() {
       await apiClient.skills.installMarket(entry.provider, entry.providerSkillId)
       await loadData()
     } catch (err) {
-      setError(normalizeError(err, `安装 "${entry.name}" 失败`))
+      const parsed = parseMarketError(err, `安装 "${entry.name}" 失败`)
+      setError(parsed.message)
     } finally {
       setBusyId(null)
     }
-  }, [loadData, normalizeError])
+  }, [loadData, parseMarketError])
 
   const stats = useMemo(() => ({
     total: indexEntries.length,
@@ -220,6 +260,7 @@ export function SkillMarketView() {
       <AnimatePresence initial={false}>
         {displayEntries.map((entry) => {
           const preview = previewMap[entry.id]
+          const previewError = previewErrorMap[entry.id]
           const isInstalled = preview ? installedIds.has(preview.localPreview.skillId) : false
           const isPreviewing = busyId === `preview:${entry.id}`
           const isInstalling = busyId === `install:${entry.id}`
@@ -322,6 +363,17 @@ export function SkillMarketView() {
                       )}
                     </div>
                   )}
+
+                  {!preview && previewError && (
+                    <div className="mt-3 rounded-[16px] border border-amber-400/16 bg-amber-400/[0.08] px-4 py-3 text-xs text-amber-100">
+                      <p>{previewError.message}</p>
+                      <p className="mt-1 text-amber-200/90">
+                        {previewError.retryable
+                          ? '当前为上游限流或临时故障，建议稍后重试预检。安装按钮会在预检通过后自动可用。'
+                          : '请先完成预检并通过兼容性检查后再安装。'}
+                      </p>
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex shrink-0 flex-col gap-2">
@@ -347,6 +399,7 @@ export function SkillMarketView() {
                       <button
                         onClick={() => void handleInstall(entry)}
                         disabled={isBusy || preview?.installability !== 'installable'}
+                        title={!preview ? '请先完成预检，预检通过后可安装' : undefined}
                         className="interactive-lift inline-flex items-center gap-2 rounded-full border border-violet-400/18 bg-violet-400/[0.08] px-3.5 py-2 text-xs text-violet-100 hover:bg-violet-400/[0.15] disabled:opacity-50"
                       >
                         {isInstalling ? (

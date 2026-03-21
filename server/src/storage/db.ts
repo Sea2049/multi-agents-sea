@@ -72,6 +72,7 @@ function ensureMemorySchema(database: BetterSqlite3Database): void {
 
 function ensureSessionSchema(database: BetterSqlite3Database): void {
   ensureColumn(database, 'sessions', 'registry_snapshot', 'TEXT')
+  ensureColumn(database, 'sessions', 'skill_routing', 'TEXT')
 }
 
 function ensureProviderSettingsSchema(database: BetterSqlite3Database): void {
@@ -83,6 +84,7 @@ function ensureTaskSchema(database: BetterSqlite3Database): void {
   ensureColumn(database, 'tasks', 'kind', `TEXT NOT NULL DEFAULT 'orchestration'`)
   ensureColumn(database, 'tasks', 'run_version', 'INTEGER NOT NULL DEFAULT 1')
   ensureColumn(database, 'tasks', 'registry_snapshot', 'TEXT')
+  ensureColumn(database, 'tasks', 'skill_routing', 'TEXT')
   ensureColumn(database, 'tasks', 'pipeline_id', 'TEXT')
   ensureColumn(database, 'tasks', 'pipeline_version', 'INTEGER')
   database.exec(`

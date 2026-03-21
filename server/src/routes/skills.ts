@@ -219,6 +219,42 @@ function isInputValidationError(err: unknown): boolean {
   )
 }
 
+interface MarketErrorShape {
+  statusCode: number
+  payload: {
+    error: string
+    code?: string
+    retryable?: boolean
+  }
+}
+
+function normalizeMarketRouteError(prefix: 'Market preview failed' | 'Market install failed', err: unknown): MarketErrorShape {
+  const message = err instanceof Error ? err.message : String(err)
+  const source = err as {
+    statusCode?: unknown
+    code?: unknown
+    retryable?: unknown
+  }
+  const statusCode = Number.isInteger(source.statusCode)
+    ? Math.min(599, Math.max(400, Number(source.statusCode)))
+    : 400
+  const code = typeof source.code === 'string' && source.code.trim()
+    ? source.code
+    : undefined
+  const retryable = typeof source.retryable === 'boolean'
+    ? source.retryable
+    : statusCode === 429 || statusCode >= 500
+
+  return {
+    statusCode,
+    payload: {
+      error: `${prefix}: ${message}`,
+      ...(code ? { code } : {}),
+      retryable,
+    },
+  }
+}
+
 export async function skillsRoutes(app: FastifyInstance): Promise<void> {
   app.get('/skills', async (_request, reply) => {
     const registry = getSkillRegistry()
@@ -303,7 +339,8 @@ export async function skillsRoutes(app: FastifyInstance): Promise<void> {
       const preview = await previewSkillFromMarket({ provider, providerSkillId })
       return reply.send(preview)
     } catch (err) {
-      return reply.status(400).send({ error: `Market preview failed: ${err instanceof Error ? err.message : String(err)}` })
+      const normalized = normalizeMarketRouteError('Market preview failed', err)
+      return reply.status(normalized.statusCode).send(normalized.payload)
     }
   })
 
@@ -318,7 +355,8 @@ export async function skillsRoutes(app: FastifyInstance): Promise<void> {
       const result = await installSkillFromMarket({ provider, providerSkillId })
       return reply.send(result)
     } catch (err) {
-      return reply.status(400).send({ error: `Market install failed: ${err instanceof Error ? err.message : String(err)}` })
+      const normalized = normalizeMarketRouteError('Market install failed', err)
+      return reply.status(normalized.statusCode).send(normalized.payload)
     }
   })
 

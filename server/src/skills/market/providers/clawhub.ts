@@ -5,6 +5,7 @@ const CLAWHUB_TIMEOUT_MS = Number(process.env['SEA_MARKET_HTTP_TIMEOUT_MS'] ?? 2
 const CLAWHUB_RESULT_LIMIT = Number(process.env['SEA_MARKET_RESULT_LIMIT'] ?? 30)
 const CLAWHUB_RETRY_MAX_ATTEMPTS = Number(process.env['SEA_MARKET_RETRY_MAX_ATTEMPTS'] ?? 3)
 const CLAWHUB_RETRY_BASE_DELAY_MS = Number(process.env['SEA_MARKET_RETRY_BASE_DELAY_MS'] ?? 500)
+const CLAWHUB_DETAIL_CONCURRENCY = Math.max(1, Number(process.env['SEA_MARKET_DETAIL_CONCURRENCY'] ?? 4))
 const CLAWHUB_SEARCH_CACHE_TTL_MS = Number(process.env['SEA_MARKET_SEARCH_CACHE_TTL_MS'] ?? 5 * 60 * 1000)
 const CLAWHUB_BUNDLE_CACHE_TTL_MS = Number(process.env['SEA_MARKET_BUNDLE_CACHE_TTL_MS'] ?? 30 * 60 * 1000)
 const CLAWHUB_SEARCH_CACHE_MAX_ENTRIES = Math.max(1, Number(process.env['SEA_MARKET_SEARCH_CACHE_MAX_ENTRIES'] ?? 80))
@@ -17,6 +18,9 @@ interface CacheEntry<T> {
 
 const searchCache = new Map<string, CacheEntry<SkillMarketEntry[]>>()
 const bundleCache = new Map<string, CacheEntry<Buffer>>()
+const inflightSearch = new Map<string, Promise<SkillMarketEntry[]>>()
+const inflightBundle = new Map<string, Promise<Buffer>>()
+const inflightDetails = new Map<string, Promise<ClawHubSkillDetailsResponse | null>>()
 
 interface ClawHubSearchResult {
   slug: string
@@ -54,6 +58,27 @@ interface ClawHubSkillDetailsResponse {
   } | null
 }
 
+interface MarketProviderErrorOptions {
+  statusCode?: number
+  code?: string
+  retryable?: boolean
+  cause?: unknown
+}
+
+export class MarketProviderError extends Error {
+  readonly statusCode: number
+  readonly code: string
+  readonly retryable: boolean
+
+  constructor(message: string, options?: MarketProviderErrorOptions) {
+    super(message, { cause: options?.cause })
+    this.name = 'MarketProviderError'
+    this.statusCode = options?.statusCode ?? 502
+    this.code = options?.code ?? 'UPSTREAM_ERROR'
+    this.retryable = options?.retryable ?? false
+  }
+}
+
 function logMetric(event: string, fields: Record<string, unknown>): void {
   const payload = {
     event,
@@ -75,8 +100,7 @@ function getCache<T>(
   }
   const ageMs = Date.now() - entry.createdAt
   if (ageMs > ttlMs) {
-    cache.delete(key)
-    logMetric('cache_expired', { cacheName, key, ageMs, ttlMs })
+    logMetric('cache_expired', { cacheName, key, ageMs, ttlMs, keepForStaleFallback: true })
     return null
   }
   // LRU touch: move to newest
@@ -172,15 +196,20 @@ async function fetchWithTimeout(url: string): Promise<Response> {
 }
 
 async function fetchWithRetry(url: string, context: string): Promise<Response> {
-  let lastError: Error | null = null
+  let lastError: MarketProviderError | null = null
   for (let attempt = 1; attempt <= CLAWHUB_RETRY_MAX_ATTEMPTS; attempt += 1) {
     try {
       const response = await fetchWithTimeout(url)
       if (response.ok) {
         return response
       }
-      if (!isRetryableStatus(response.status) || attempt === CLAWHUB_RETRY_MAX_ATTEMPTS) {
-        throw new Error(`HTTP ${response.status}`)
+      const retryable = isRetryableStatus(response.status)
+      if (!retryable || attempt === CLAWHUB_RETRY_MAX_ATTEMPTS) {
+        throw new MarketProviderError(`HTTP ${response.status}`, {
+          statusCode: response.status,
+          code: response.status === 429 ? 'UPSTREAM_RATE_LIMIT' : 'UPSTREAM_HTTP_ERROR',
+          retryable,
+        })
       }
       const retryAfterMs = parseRetryAfterMs(response.headers.get('retry-after'))
       const delayMs = computeBackoffDelayMs(attempt, retryAfterMs)
@@ -192,7 +221,17 @@ async function fetchWithRetry(url: string, context: string): Promise<Response> {
       })
       await sleep(delayMs)
     } catch (error) {
-      const normalized = error instanceof Error ? error : new Error(String(error))
+      const normalized = error instanceof MarketProviderError
+        ? error
+        : new MarketProviderError(
+            error instanceof Error ? error.message : String(error),
+            {
+              statusCode: 502,
+              code: 'UPSTREAM_NETWORK_ERROR',
+              retryable: true,
+              cause: error,
+            },
+          )
       lastError = normalized
       if (attempt === CLAWHUB_RETRY_MAX_ATTEMPTS) {
         break
@@ -213,6 +252,65 @@ async function fetchWithRetry(url: string, context: string): Promise<Response> {
     error: lastError?.message ?? 'fetch failed',
   })
   throw lastError ?? new Error('fetch failed')
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  mapper: (item: T) => Promise<R>,
+): Promise<R[]> {
+  if (items.length === 0) {
+    return []
+  }
+  const results: R[] = new Array(items.length)
+  let cursor = 0
+  const workerCount = Math.max(1, Math.min(limit, items.length))
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (true) {
+        const current = cursor
+        cursor += 1
+        if (current >= items.length) {
+          return
+        }
+        results[current] = await mapper(items[current]!)
+      }
+    }),
+  )
+
+  return results
+}
+
+function runWithInflight<T>(
+  inflightMap: Map<string, Promise<T>>,
+  key: string,
+  loader: () => Promise<T>,
+): Promise<T> {
+  const existing = inflightMap.get(key)
+  if (existing) {
+    logMetric('inflight_dedup_hit', { key })
+    return existing
+  }
+  const task = loader().finally(() => {
+    inflightMap.delete(key)
+  })
+  inflightMap.set(key, task)
+  return task
+}
+
+async function fetchSkillDetails(item: ClawHubSearchResult): Promise<ClawHubSkillDetailsResponse | null> {
+  return runWithInflight(inflightDetails, item.slug, async () => {
+    const detailsUrl = new URL(`/api/v1/skills/${encodeURIComponent(item.slug)}`, CLAWHUB_BASE_URL)
+    try {
+      return await fetchJson<ClawHubSkillDetailsResponse>(
+        detailsUrl.toString(),
+        `details:${item.slug}`,
+      )
+    } catch {
+      return null
+    }
+  })
 }
 
 async function fetchJson<T>(url: string, context: string): Promise<T> {
@@ -270,54 +368,47 @@ export const clawhubProvider: SkillMarketProviderAdapter = {
     if (cached) {
       return cached
     }
-
-    const searchUrl = new URL('/api/v1/search', CLAWHUB_BASE_URL)
-    if (normalizedQuery) {
-      searchUrl.searchParams.set('q', normalizedQuery)
-    } else {
-      searchUrl.searchParams.set('q', 'skills')
-    }
-    searchUrl.searchParams.set('nonSuspicious', 'true')
-
-    try {
-      const searchResponse = await fetchJson<ClawHubSearchResponse>(
-        searchUrl.toString(),
-        `search:${cacheKey}`,
-      )
-      const baseResults = (searchResponse.results ?? []).slice(0, CLAWHUB_RESULT_LIMIT)
-      if (baseResults.length === 0) {
-        setCache(searchCache, 'search', cacheKey, [], CLAWHUB_SEARCH_CACHE_MAX_ENTRIES)
-        return []
+    return runWithInflight(inflightSearch, cacheKey, async () => {
+      const searchUrl = new URL('/api/v1/search', CLAWHUB_BASE_URL)
+      if (normalizedQuery) {
+        searchUrl.searchParams.set('q', normalizedQuery)
+      } else {
+        searchUrl.searchParams.set('q', 'skills')
       }
+      searchUrl.searchParams.set('nonSuspicious', 'true')
 
-      const entries = await Promise.all(baseResults.map(async (item) => {
-        const detailsUrl = new URL(`/api/v1/skills/${encodeURIComponent(item.slug)}`, CLAWHUB_BASE_URL)
-        try {
-          const details = await fetchJson<ClawHubSkillDetailsResponse>(
-            detailsUrl.toString(),
-            `details:${item.slug}`,
-          )
-          return normalizeSkillEntry(item, details)
-        } catch {
-          return normalizeSkillEntry(item, {})
+      try {
+        const searchResponse = await fetchJson<ClawHubSearchResponse>(
+          searchUrl.toString(),
+          `search:${cacheKey}`,
+        )
+        const baseResults = (searchResponse.results ?? []).slice(0, CLAWHUB_RESULT_LIMIT)
+        if (baseResults.length === 0) {
+          setCache(searchCache, 'search', cacheKey, [], CLAWHUB_SEARCH_CACHE_MAX_ENTRIES)
+          return []
         }
-      }))
 
-      setCache(
-        searchCache,
-        'search',
-        cacheKey,
-        entries,
-        CLAWHUB_SEARCH_CACHE_MAX_ENTRIES,
-      )
-      return entries
-    } catch (error) {
-      const stale = getStaleCache(searchCache, 'search', cacheKey)
-      if (stale) {
-        return stale
+        const entries = await mapWithConcurrency(baseResults, CLAWHUB_DETAIL_CONCURRENCY, async (item) => {
+          const details = await fetchSkillDetails(item)
+          return normalizeSkillEntry(item, details ?? {})
+        })
+
+        setCache(
+          searchCache,
+          'search',
+          cacheKey,
+          entries,
+          CLAWHUB_SEARCH_CACHE_MAX_ENTRIES,
+        )
+        return entries
+      } catch (error) {
+        const stale = getStaleCache(searchCache, 'search', cacheKey)
+        if (stale) {
+          return stale
+        }
+        throw error
       }
-      throw error
-    }
+    })
   },
 
   async fetchBundle({ providerSkillId }): Promise<Buffer> {
@@ -325,33 +416,46 @@ export const clawhubProvider: SkillMarketProviderAdapter = {
     if (cached) {
       return cached
     }
+    return runWithInflight(inflightBundle, providerSkillId, async () => {
+      const downloadUrl = new URL('/api/v1/download', CLAWHUB_BASE_URL)
+      downloadUrl.searchParams.set('slug', providerSkillId)
 
-    const downloadUrl = new URL('/api/v1/download', CLAWHUB_BASE_URL)
-    downloadUrl.searchParams.set('slug', providerSkillId)
-
-    try {
-      const response = await fetchWithRetry(
-        downloadUrl.toString(),
-        `bundle:${providerSkillId}`,
-      )
-      const data = await response.arrayBuffer()
-      const bundle = Buffer.from(data)
-      setCache(
-        bundleCache,
-        'bundle',
-        providerSkillId,
-        bundle,
-        CLAWHUB_BUNDLE_CACHE_MAX_ENTRIES,
-      )
-      return bundle
-    } catch (error) {
-      const stale = getStaleCache(bundleCache, 'bundle', providerSkillId)
-      if (stale) {
-        return stale
+      try {
+        const response = await fetchWithRetry(
+          downloadUrl.toString(),
+          `bundle:${providerSkillId}`,
+        )
+        const data = await response.arrayBuffer()
+        const bundle = Buffer.from(data)
+        setCache(
+          bundleCache,
+          'bundle',
+          providerSkillId,
+          bundle,
+          CLAWHUB_BUNDLE_CACHE_MAX_ENTRIES,
+        )
+        return bundle
+      } catch (error) {
+        const stale = getStaleCache(bundleCache, 'bundle', providerSkillId)
+        if (stale) {
+          return stale
+        }
+        if (error instanceof MarketProviderError) {
+          throw new MarketProviderError(`Failed to download bundle: ${error.message}`, {
+            statusCode: error.statusCode,
+            code: error.code,
+            retryable: error.retryable,
+            cause: error,
+          })
+        }
+        const fallbackMessage = error instanceof Error ? error.message : String(error)
+        throw new MarketProviderError(`Failed to download bundle: ${fallbackMessage}`, {
+          statusCode: 502,
+          code: 'UPSTREAM_ERROR',
+          retryable: true,
+          cause: error,
+        })
       }
-      throw error instanceof Error
-        ? new Error(`Failed to download bundle: ${error.message}`)
-        : new Error(`Failed to download bundle: ${String(error)}`)
-    }
+    })
   },
 }

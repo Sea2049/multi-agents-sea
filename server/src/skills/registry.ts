@@ -168,7 +168,7 @@ export class SkillRegistry {
     const now = Date.now()
     db.prepare(`
       INSERT INTO skill_settings (skill_id, enabled, trusted, updated_at)
-      VALUES (?, ?, COALESCE((SELECT trusted FROM skill_settings WHERE skill_id = ?), NULL), ?)
+      VALUES (?, ?, COALESCE((SELECT trusted FROM skill_settings WHERE skill_id = ?), 0), ?)
       ON CONFLICT(skill_id) DO UPDATE SET enabled = excluded.enabled, updated_at = excluded.updated_at
     `).run(skillId, enabled ? 1 : 0, skillId, now)
 

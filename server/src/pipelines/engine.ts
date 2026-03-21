@@ -4,7 +4,8 @@ import { summarizeStepOutput } from '../orchestrator/step-summarizer.js'
 import type { StepResult, TaskExecutionEvent, TaskPlan } from '../orchestrator/types.js'
 import type { LLMProvider, ToolCallRequest } from '../providers/types.js'
 import { loadAgentSystemPrompt } from '../runtime/prompt-loader.js'
-import type { RegistrySnapshot } from '../runtime/registry-snapshot.js'
+import type { RegistrySnapshot, SkillRoutingPolicy } from '../runtime/registry-snapshot.js'
+import { deriveScopedSnapshot } from '../runtime/scoped-snapshot.js'
 import { runWithTools } from '../runtime/tool-executor.js'
 import { executeTool, getToolDefinitions } from '../tools/index.js'
 import { getPipelineById } from './store.js'
@@ -36,6 +37,7 @@ export interface RunPipelineParams {
   objective: string
   definition: PipelineDefinition
   snapshot: RegistrySnapshot
+  skillRouting?: SkillRoutingPolicy
   providerFactory: (provider: string) => LLMProvider
   runtimeDefaults?: PipelineRuntimeDefaults
   onEvent: (event: TaskExecutionEvent) => void
@@ -275,6 +277,7 @@ async function runLlmStep(params: {
   pipelineStep: Extract<PipelineStep, { kind: 'llm' }>
   completedResults: Map<string, StepResult>
   snapshot: RegistrySnapshot
+  skillRouting?: SkillRoutingPolicy
   providerFactory: (provider: string) => LLMProvider
   runtimeDefaults: PipelineRuntimeDefaults
   onEvent: (event: TaskExecutionEvent) => void
@@ -286,6 +289,7 @@ async function runLlmStep(params: {
     pipelineStep,
     completedResults,
     snapshot,
+    skillRouting,
     providerFactory,
     runtimeDefaults,
     onEvent,
@@ -299,16 +303,17 @@ async function runLlmStep(params: {
   }
 
   const provider = providerFactory(providerName)
+  const scopedSnapshot = deriveScopedSnapshot(snapshot, pipelineStep.assignee, skillRouting)
   let systemPrompt: string
   try {
-    systemPrompt = loadAgentSystemPrompt(pipelineStep.assignee, snapshot)
+    systemPrompt = loadAgentSystemPrompt(pipelineStep.assignee, scopedSnapshot)
   } catch {
     systemPrompt = `You are ${pipelineStep.assignee}. Complete the given task thoroughly and clearly.`
   }
 
   const { message, promptChars } = await buildExecutionMessage(compiledStep, completedResults)
   const startedAt = Date.now()
-  const tools = getToolDefinitions(snapshot)
+  const tools = getToolDefinitions(scopedSnapshot)
 
   const chatPromise = (async () => {
     const result = await runWithTools({
@@ -317,7 +322,7 @@ async function runLlmStep(params: {
       systemPrompt,
       initialMessages: [{ role: 'user', content: message }],
       tools,
-      snapshot,
+      snapshot: scopedSnapshot,
       onToolCallStarted: (toolCall) => {
         onEvent({
           type: 'tool_call_started',
@@ -567,6 +572,7 @@ export async function runPipeline(params: RunPipelineParams): Promise<{
     objective,
     definition,
     snapshot,
+    skillRouting,
     providerFactory,
     runtimeDefaults,
     onEvent,
@@ -1131,6 +1137,7 @@ export async function runPipeline(params: RunPipelineParams): Promise<{
                 pipelineStep: step,
                 completedResults: stepResults,
                 snapshot,
+                skillRouting,
                 providerFactory,
                 runtimeDefaults: resolvedDefaults,
                 onEvent,

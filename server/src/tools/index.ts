@@ -107,6 +107,11 @@ export function getToolDefinitions(snapshot?: RegistrySnapshot): ToolDefinition[
   return getToolRegistry().getDefinitions()
 }
 
+export function getToolDefinitionsWithOwner(): Array<{ definition: ToolDefinition; ownerId: string }> {
+  ensureBuiltinToolsRegistered()
+  return getToolRegistry().getDefinitionsWithOwner()
+}
+
 export function getToolRegistryVersion(): number {
   ensureBuiltinToolsRegistered()
   return getToolRegistry().getVersion()

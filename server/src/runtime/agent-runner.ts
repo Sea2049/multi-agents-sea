@@ -2,10 +2,11 @@ import { randomUUID } from 'node:crypto'
 import { getDb } from '../storage/db.js'
 import { retrieveRelevantMemories } from '../memory/retriever.js'
 import type { LLMProvider, ChatChunk, Message, ProviderMessage } from '../providers/types.js'
-import type { RegistrySnapshot } from './registry-snapshot.js'
+import type { RegistrySnapshot, SkillRoutingPolicy } from './registry-snapshot.js'
 import { getToolDefinitions } from '../tools/index.js'
 import { loadAgentSystemPrompt } from './prompt-loader.js'
 import { runWithTools } from './tool-executor.js'
+import { deriveScopedSnapshot } from './scoped-snapshot.js'
 
 const MAX_CONTEXT_MESSAGES = 20
 
@@ -16,6 +17,7 @@ export interface RunAgentParams {
   provider: LLMProvider
   model: string
   snapshot: RegistrySnapshot
+  skillRouting?: SkillRoutingPolicy
 }
 
 export interface AgentRunResult {
@@ -93,9 +95,10 @@ function persistMessage(
 export async function* runAgentStream(
   params: RunAgentParams,
 ): AsyncIterable<ChatChunk> {
-  const { agentId, sessionId, message, provider, model, snapshot } = params
+  const { agentId, sessionId, message, provider, model, snapshot, skillRouting } = params
+  const scopedSnapshot = deriveScopedSnapshot(snapshot, agentId, skillRouting)
 
-  const systemPrompt = loadAgentSystemPrompt(agentId, snapshot)
+  const systemPrompt = loadAgentSystemPrompt(agentId, scopedSnapshot)
   const history = loadRecentMessages(sessionId)
   const userMessage = await buildUserMessageWithMemoryContext(message)
 
@@ -115,8 +118,8 @@ export async function* runAgentStream(
         model,
         systemPrompt,
         initialMessages: toProviderMessages(messages),
-        tools: getToolDefinitions(snapshot),
-        snapshot,
+        tools: getToolDefinitions(scopedSnapshot),
+        snapshot: scopedSnapshot,
       })
       fullReply = result.finalText
       if (fullReply) {

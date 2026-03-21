@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Loader2, Settings, X, Zap } from 'lucide-react';
 import type { Agent, Division } from '../../data/agents';
 import { apiClient } from '../../lib/api-client';
-import type { ProviderConfig } from '../../lib/api-client';
+import type { ProviderConfig, SkillRoutingPolicy } from '../../lib/api-client';
 
 interface TaskLaunchPanelProps {
   teamMembers: Agent[];
@@ -12,6 +12,61 @@ interface TaskLaunchPanelProps {
   onOpenSettings: () => void;
   onTaskCreated: (taskId: string) => void;
   providerConfigVersion: number;
+}
+
+interface SkillRoutingDraft {
+  allow: string[];
+  deny: string[];
+}
+
+interface SkillSearchDraft {
+  allow: string;
+  deny: string;
+}
+
+interface SkillVisibilityDraft {
+  allow: boolean;
+  deny: boolean;
+}
+
+interface SkillOption {
+  id: string;
+  name: string;
+}
+
+function normalizeSkillIds(values: string[]): string[] | undefined {
+  const normalized = values
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+  if (normalized.length === 0) {
+    return undefined;
+  }
+  return [...new Set(normalized)];
+}
+
+function buildSkillRoutingPolicy(
+  enabled: boolean,
+  defaultMode: 'all' | 'none',
+  drafts: Record<string, SkillRoutingDraft>,
+): SkillRoutingPolicy | undefined {
+  if (!enabled) {
+    return undefined;
+  }
+
+  const perAgent: Record<string, { allow?: string[]; deny?: string[] }> = {};
+  for (const [agentId, draft] of Object.entries(drafts)) {
+    const allow = normalizeSkillIds(draft.allow);
+    const deny = normalizeSkillIds(draft.deny);
+    if (!allow && !deny) {
+      continue;
+    }
+    perAgent[agentId] = { allow, deny };
+  }
+
+  return {
+    defaultMode,
+    perAgent: Object.keys(perAgent).length > 0 ? perAgent : undefined,
+  };
 }
 
 function TaskLaunchPanel({
@@ -32,6 +87,75 @@ function TaskLaunchPanel({
   const [needsProviderOnboarding, setNeedsProviderOnboarding] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [skillRoutingEnabled, setSkillRoutingEnabled] = useState(false);
+  const [skillRoutingDefaultMode, setSkillRoutingDefaultMode] = useState<'all' | 'none'>('all');
+  const [skillRoutingDrafts, setSkillRoutingDrafts] = useState<Record<string, SkillRoutingDraft>>({});
+  const [skillSearchDrafts, setSkillSearchDrafts] = useState<Record<string, SkillSearchDraft>>({});
+  const [skillVisibilityDrafts, setSkillVisibilityDrafts] = useState<Record<string, SkillVisibilityDraft>>({});
+  const [availableSkills, setAvailableSkills] = useState<SkillOption[]>([]);
+  const [skillsLoading, setSkillsLoading] = useState(false);
+  const [skillsLoadError, setSkillsLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setSkillRoutingDrafts((previous) => {
+      const next: Record<string, SkillRoutingDraft> = {};
+      for (const agent of teamMembers) {
+        next[agent.id] = previous[agent.id] ?? { allow: [], deny: [] };
+      }
+      return next;
+    });
+
+    setSkillSearchDrafts((previous) => {
+      const next: Record<string, SkillSearchDraft> = {};
+      for (const agent of teamMembers) {
+        next[agent.id] = previous[agent.id] ?? { allow: '', deny: '' };
+      }
+      return next;
+    });
+
+    setSkillVisibilityDrafts((previous) => {
+      const next: Record<string, SkillVisibilityDraft> = {};
+      for (const agent of teamMembers) {
+        next[agent.id] = previous[agent.id] ?? { allow: false, deny: false };
+      }
+      return next;
+    });
+  }, [teamMembers]);
+
+  useEffect(() => {
+    if (!skillRoutingEnabled || availableSkills.length > 0 || skillsLoading) {
+      return;
+    }
+
+    let cancelled = false;
+    setSkillsLoading(true);
+    setSkillsLoadError(null);
+    apiClient.skills.list()
+      .then((response) => {
+        if (cancelled) {
+          return;
+        }
+        const options = response.skills
+          .map((skill) => ({ id: skill.id, name: skill.name }))
+          .sort((left, right) => left.name.localeCompare(right.name));
+        setAvailableSkills(options);
+      })
+      .catch((err) => {
+        if (cancelled) {
+          return;
+        }
+        setSkillsLoadError(err instanceof Error ? err.message : '技能列表加载失败');
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setSkillsLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [availableSkills.length, skillRoutingEnabled, skillsLoading]);
 
   useEffect(() => {
     let cancelled = false;
@@ -135,6 +259,11 @@ function TaskLaunchPanel({
     setIsSubmitting(true);
 
     try {
+      const skillRouting = buildSkillRoutingPolicy(
+        skillRoutingEnabled,
+        skillRoutingDefaultMode,
+        skillRoutingDrafts,
+      );
       const result = await apiClient.tasks.create({
         objective: objective.trim(),
         teamMembers: teamMembers.map((agent) => ({
@@ -142,6 +271,7 @@ function TaskLaunchPanel({
           provider,
           model,
         })),
+        skillRouting,
       });
       onTaskCreated(result.taskId);
       onClose();
@@ -154,6 +284,36 @@ function TaskLaunchPanel({
 
   const getDivision = (agent: Agent) =>
     divisions.find((d) => d.id === agent.division) ?? null;
+
+  const updateSkillSelection = (
+    agentId: string,
+    list: 'allow' | 'deny',
+    skillId: string,
+  ) => {
+    setSkillRoutingDrafts((previous) => {
+      const current = previous[agentId] ?? { allow: [], deny: [] };
+      const target = new Set(current[list]);
+      const oppositeKey = list === 'allow' ? 'deny' : 'allow';
+      const opposite = new Set(current[oppositeKey]);
+
+      if (target.has(skillId)) {
+        target.delete(skillId);
+      } else {
+        target.add(skillId);
+        // Keep the policy intuitive: same skill cannot exist in both lists.
+        opposite.delete(skillId);
+      }
+
+      return {
+        ...previous,
+        [agentId]: {
+          ...current,
+          [list]: [...target],
+          [oppositeKey]: [...opposite],
+        },
+      };
+    });
+  };
 
   return (
     <AnimatePresence>
@@ -317,6 +477,235 @@ function TaskLaunchPanel({
                   </select>
                 </div>
               </div>
+            </section>
+
+            <section className="space-y-3 rounded-[22px] border border-white/[0.08] bg-black/20 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Per-Agent Skills Routing</p>
+                  <p className="mt-1 text-xs text-slate-400">
+                    可为每个 Agent 设置 allow/deny skill 列表（多选 + 搜索）
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSkillRoutingEnabled((value) => !value)}
+                  className={`rounded-full border px-3 py-1.5 text-xs transition ${
+                    skillRoutingEnabled
+                      ? 'border-emerald-400/35 bg-emerald-400/18 text-emerald-100'
+                      : 'border-white/12 bg-white/[0.05] text-slate-300'
+                  }`}
+                >
+                  {skillRoutingEnabled ? '已启用' : '未启用'}
+                </button>
+              </div>
+
+              {skillRoutingEnabled && (
+                <div className="space-y-3">
+                  <div className="space-y-1">
+                    <label className="text-[11px] text-slate-500">默认策略</label>
+                    <select
+                      value={skillRoutingDefaultMode}
+                      onChange={(event) => setSkillRoutingDefaultMode(event.target.value as 'all' | 'none')}
+                      className="w-full rounded-[14px] border border-white/[0.08] bg-black/30 px-3 py-2 text-xs text-slate-200 outline-none transition focus:border-violet-400/30"
+                    >
+                      <option value="all">all（默认允许全部技能）</option>
+                      <option value="none">none（默认不允许任何技能）</option>
+                    </select>
+                  </div>
+
+                  <div className="rounded-[14px] border border-white/[0.08] bg-black/25 px-3 py-2 text-[11px] text-slate-400">
+                    {skillsLoading ? '正在加载技能列表…' : `已加载 ${availableSkills.length} 个技能`}
+                    {skillsLoadError ? ` · 加载失败：${skillsLoadError}` : ''}
+                  </div>
+
+                  <div className="max-h-56 space-y-3 overflow-y-auto pr-1">
+                    {teamMembers.map((agent) => {
+                      const draft = skillRoutingDrafts[agent.id] ?? { allow: [], deny: [] };
+                      const search = skillSearchDrafts[agent.id] ?? { allow: '', deny: '' };
+                      const visibility = skillVisibilityDrafts[agent.id] ?? { allow: false, deny: false };
+                      const allowKeyword = search.allow.trim().toLowerCase();
+                      const denyKeyword = search.deny.trim().toLowerCase();
+                      const allowMatches = availableSkills.filter((skill) =>
+                        !allowKeyword
+                          || skill.id.toLowerCase().includes(allowKeyword)
+                          || skill.name.toLowerCase().includes(allowKeyword),
+                      );
+                      const denyMatches = availableSkills.filter((skill) =>
+                        !denyKeyword
+                          || skill.id.toLowerCase().includes(denyKeyword)
+                          || skill.name.toLowerCase().includes(denyKeyword),
+                      );
+                      const allowList = visibility.allow
+                        ? allowMatches
+                        : allowMatches.filter((skill) => !draft.allow.includes(skill.id));
+                      const denyList = visibility.deny
+                        ? denyMatches
+                        : denyMatches.filter((skill) => !draft.deny.includes(skill.id));
+                      return (
+                        <div
+                          key={agent.id}
+                          className="rounded-[16px] border border-white/[0.08] bg-black/25 p-3"
+                        >
+                          <p className="text-xs font-medium text-white">{agent.name}</p>
+                          <p className="mt-0.5 text-[11px] text-slate-500">{agent.id}</p>
+                          <div className="mt-2 grid gap-3 md:grid-cols-2">
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between gap-2">
+                                <p className="text-[11px] uppercase tracking-[0.18em] text-emerald-300/80">Allow</p>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setSkillVisibilityDrafts((previous) => ({
+                                      ...previous,
+                                      [agent.id]: {
+                                        ...visibility,
+                                        allow: !visibility.allow,
+                                      },
+                                    }))
+                                  }
+                                  className="rounded-full border border-emerald-400/25 bg-emerald-400/10 px-2 py-0.5 text-[10px] text-emerald-100"
+                                >
+                                  {visibility.allow ? '隐藏已选' : '显示已选'}
+                                </button>
+                              </div>
+                              <input
+                                value={search.allow}
+                                onChange={(event) =>
+                                  setSkillSearchDrafts((previous) => ({
+                                    ...previous,
+                                    [agent.id]: {
+                                      ...search,
+                                      allow: event.target.value,
+                                    },
+                                  }))
+                                }
+                                placeholder="搜索 skill 名称或 id"
+                                className="w-full rounded-[12px] border border-emerald-400/20 bg-black/30 px-3 py-2 text-xs text-slate-200 placeholder-slate-600 outline-none transition focus:border-emerald-400/40"
+                              />
+                              <div className="max-h-24 space-y-1 overflow-y-auto rounded-[12px] border border-white/[0.08] bg-black/20 p-2">
+                                {allowList.length === 0 && (
+                                  <p className="text-[11px] text-slate-500">
+                                    {allowKeyword ? '无匹配技能' : '无可选技能（已隐藏已选项）'}
+                                  </p>
+                                )}
+                                {allowList.map((skill) => {
+                                  const selected = draft.allow.includes(skill.id);
+                                  return (
+                                    <button
+                                      key={`${agent.id}:allow:${skill.id}`}
+                                      type="button"
+                                      onClick={() => updateSkillSelection(agent.id, 'allow', skill.id)}
+                                      className={`flex w-full items-center justify-between rounded-[10px] px-2 py-1.5 text-left text-[11px] transition ${
+                                        selected
+                                          ? 'bg-emerald-400/20 text-emerald-100'
+                                          : 'bg-white/[0.02] text-slate-300 hover:bg-white/[0.06]'
+                                      }`}
+                                    >
+                                      <span className="truncate pr-2">{skill.name}</span>
+                                      <span className="shrink-0 text-[10px] text-slate-500">{skill.id}</span>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                              {draft.allow.length > 0 && (
+                                <div className="flex flex-wrap gap-1.5">
+                                  {draft.allow.map((skillId) => (
+                                    <button
+                                      key={`${agent.id}:allow-tag:${skillId}`}
+                                      type="button"
+                                      onClick={() => updateSkillSelection(agent.id, 'allow', skillId)}
+                                      className="rounded-full border border-emerald-400/25 bg-emerald-400/14 px-2 py-1 text-[10px] text-emerald-100"
+                                      title="点击移除"
+                                    >
+                                      {skillId} ×
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between gap-2">
+                                <p className="text-[11px] uppercase tracking-[0.18em] text-rose-300/80">Deny</p>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setSkillVisibilityDrafts((previous) => ({
+                                      ...previous,
+                                      [agent.id]: {
+                                        ...visibility,
+                                        deny: !visibility.deny,
+                                      },
+                                    }))
+                                  }
+                                  className="rounded-full border border-rose-400/25 bg-rose-400/10 px-2 py-0.5 text-[10px] text-rose-100"
+                                >
+                                  {visibility.deny ? '隐藏已选' : '显示已选'}
+                                </button>
+                              </div>
+                              <input
+                                value={search.deny}
+                                onChange={(event) =>
+                                  setSkillSearchDrafts((previous) => ({
+                                    ...previous,
+                                    [agent.id]: {
+                                      ...search,
+                                      deny: event.target.value,
+                                    },
+                                  }))
+                                }
+                                placeholder="搜索 skill 名称或 id"
+                                className="w-full rounded-[12px] border border-rose-400/20 bg-black/30 px-3 py-2 text-xs text-slate-200 placeholder-slate-600 outline-none transition focus:border-rose-400/40"
+                              />
+                              <div className="max-h-24 space-y-1 overflow-y-auto rounded-[12px] border border-white/[0.08] bg-black/20 p-2">
+                                {denyList.length === 0 && (
+                                  <p className="text-[11px] text-slate-500">
+                                    {denyKeyword ? '无匹配技能' : '无可选技能（已隐藏已选项）'}
+                                  </p>
+                                )}
+                                {denyList.map((skill) => {
+                                  const selected = draft.deny.includes(skill.id);
+                                  return (
+                                    <button
+                                      key={`${agent.id}:deny:${skill.id}`}
+                                      type="button"
+                                      onClick={() => updateSkillSelection(agent.id, 'deny', skill.id)}
+                                      className={`flex w-full items-center justify-between rounded-[10px] px-2 py-1.5 text-left text-[11px] transition ${
+                                        selected
+                                          ? 'bg-rose-400/20 text-rose-100'
+                                          : 'bg-white/[0.02] text-slate-300 hover:bg-white/[0.06]'
+                                      }`}
+                                    >
+                                      <span className="truncate pr-2">{skill.name}</span>
+                                      <span className="shrink-0 text-[10px] text-slate-500">{skill.id}</span>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                              {draft.deny.length > 0 && (
+                                <div className="flex flex-wrap gap-1.5">
+                                  {draft.deny.map((skillId) => (
+                                    <button
+                                      key={`${agent.id}:deny-tag:${skillId}`}
+                                      type="button"
+                                      onClick={() => updateSkillSelection(agent.id, 'deny', skillId)}
+                                      className="rounded-full border border-rose-400/25 bg-rose-400/14 px-2 py-1 text-[10px] text-rose-100"
+                                      title="点击移除"
+                                    >
+                                      {skillId} ×
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </section>
 
             {error && (

@@ -1,11 +1,12 @@
 import type { LLMProvider } from '../providers/types.js'
-import type { RegistrySnapshot } from '../runtime/registry-snapshot.js'
+import type { RegistrySnapshot, SkillRoutingPolicy } from '../runtime/registry-snapshot.js'
 import type { ContextCompressionMode, TaskPlan, TaskStep, StepResult, TaskExecutionEvent } from './types.js'
 import { loadAgentSystemPrompt } from '../runtime/prompt-loader.js'
 import { runWithTools } from '../runtime/tool-executor.js'
 import { getToolDefinitions } from '../tools/index.js'
 import { summarizeStepOutput } from './step-summarizer.js'
 import { buildExecutionMessage, DEFAULT_CONTEXT_COMPRESSION_MODE } from './execution-message.js'
+import { deriveScopedSnapshot } from '../runtime/scoped-snapshot.js'
 
 export interface SchedulerTeamMember {
   agentId: string
@@ -18,6 +19,7 @@ export interface SchedulerParams {
   teamMembers: SchedulerTeamMember[]
   providerFactory: (provider: string) => LLMProvider
   snapshot?: RegistrySnapshot
+  skillRouting?: SkillRoutingPolicy
   onEvent: (event: TaskExecutionEvent) => void
   timeoutMs?: number
   maxConcurrent?: number
@@ -29,16 +31,18 @@ async function executeStep(
   completedResults: Map<string, StepResult>,
   providerFactory: (provider: string) => LLMProvider,
   snapshot: RegistrySnapshot | undefined,
+  skillRouting: SkillRoutingPolicy | undefined,
   timeoutMs: number,
   taskId: string,
   onEvent: (event: TaskExecutionEvent) => void,
 ): Promise<StepResult> {
   const startedAt = Date.now()
   const provider = providerFactory(teamMember.provider)
+  const scopedSnapshot = snapshot ? deriveScopedSnapshot(snapshot, step.assignee, skillRouting) : undefined
 
   let systemPrompt: string
   try {
-    systemPrompt = loadAgentSystemPrompt(step.assignee, snapshot)
+    systemPrompt = loadAgentSystemPrompt(step.assignee, scopedSnapshot)
   } catch {
     systemPrompt = `You are ${step.assignee}. Complete the given task thoroughly and clearly.`
   }
@@ -48,7 +52,7 @@ async function executeStep(
     completedResults,
     DEFAULT_CONTEXT_COMPRESSION_MODE,
   )
-  const tools = getToolDefinitions(snapshot)
+  const tools = getToolDefinitions(scopedSnapshot)
 
   const chatPromise = (async () => {
     const result = await runWithTools({
@@ -57,7 +61,7 @@ async function executeStep(
       systemPrompt,
       initialMessages: [{ role: 'user', content: message }],
       tools,
-      snapshot,
+      snapshot: scopedSnapshot,
       onToolCallStarted: (toolCall) => {
         onEvent({
           type: 'tool_call_started',
@@ -126,6 +130,7 @@ export async function executePlan(params: SchedulerParams): Promise<Map<string, 
     teamMembers,
     providerFactory,
     snapshot,
+    skillRouting,
     onEvent,
     timeoutMs = 120_000,
     maxConcurrent = 2,
@@ -275,7 +280,7 @@ export async function executePlan(params: SchedulerParams): Promise<Map<string, 
           timestamp: Date.now(),
         })
 
-        executeStep(step, teamMember, completedResults, providerFactory, snapshot, timeoutMs, plan.taskId, onEvent)
+        executeStep(step, teamMember, completedResults, providerFactory, snapshot, skillRouting, timeoutMs, plan.taskId, onEvent)
           .then((result) => {
             runningSteps.delete(step.id)
             completedSteps.add(step.id)

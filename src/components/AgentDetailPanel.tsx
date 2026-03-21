@@ -94,6 +94,7 @@ function AgentDetailPanel({
       {agent && division && (
         <>
           <motion.div
+            key="agent-detail-backdrop"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -102,6 +103,7 @@ function AgentDetailPanel({
           />
 
           <motion.aside
+            key="agent-detail-drawer"
             initial={{ opacity: 0, x: 40 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: 40 }}

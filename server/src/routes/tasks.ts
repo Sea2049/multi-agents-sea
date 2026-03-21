@@ -3,8 +3,9 @@ import type { FastifyInstance } from 'fastify'
 import { getDb } from '../storage/db.js'
 import { getRuntimeProviderFromEnv, isProviderName, type ProviderName } from '../providers/index.js'
 import { createRegistrySnapshot } from '../runtime/registry-snapshot-builder.js'
-import type { RegistrySnapshot } from '../runtime/registry-snapshot.js'
+import type { RegistrySnapshot, SkillRoutingPolicy } from '../runtime/registry-snapshot.js'
 import { parseRegistrySnapshot, serializeRegistrySnapshot } from '../runtime/registry-snapshot.js'
+import { parseSkillRoutingPolicy, sanitizeSkillRoutingPolicy, serializeSkillRoutingPolicy } from '../runtime/skill-routing.js'
 import { loadAgentProfile } from '../runtime/prompt-loader.js'
 import { persistTaskLongTermMemories } from '../memory/task-memory-extractor.js'
 import { createPlan } from '../orchestrator/planner.js'
@@ -48,6 +49,7 @@ interface TaskTeamMemberInput {
 interface CreateTaskBody {
   objective: string
   teamMembers: TaskTeamMemberInput[]
+  skillRouting?: SkillRoutingPolicy
 }
 
 interface TaskRow {
@@ -59,6 +61,7 @@ interface TaskRow {
   objective: string
   plan: string | null
   registry_snapshot: string | null
+  skill_routing: string | null
   pipeline_id: string | null
   pipeline_version: number | null
   result: string | null
@@ -123,8 +126,9 @@ async function runOrchestration(params: {
   runVersion?: number
   teamMembersInput: TaskTeamMemberInput[]
   snapshot: RegistrySnapshot
+  skillRouting?: SkillRoutingPolicy
 }): Promise<void> {
-  const { taskId, objective, continuationContext, teamMembersInput, snapshot } = params
+  const { taskId, objective, continuationContext, teamMembersInput, snapshot, skillRouting } = params
   const runVersion = params.runVersion ?? getTaskRunVersion(params.taskId)
 
   try {
@@ -217,6 +221,7 @@ async function runOrchestration(params: {
       })),
       providerFactory: (providerName) => getRuntimeProviderFromEnv(providerName as ProviderName),
       snapshot,
+      skillRouting,
       onEvent: (event) => {
         const scopedEvent: TaskExecutionEvent = { ...event, runVersion }
         if (event.type !== 'task_completed' && event.type !== 'task_failed') {
@@ -317,10 +322,11 @@ export async function tasksRoutes(app: FastifyInstance): Promise<void> {
     const taskId = randomUUID()
     const now = Date.now()
     const snapshot = createRegistrySnapshot()
+    const skillRouting = sanitizeSkillRoutingPolicy(request.body.skillRouting)
 
     db.prepare(
-      `INSERT INTO tasks (id, status, kind, run_version, team_members, objective, registry_snapshot, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO tasks (id, status, kind, run_version, team_members, objective, registry_snapshot, skill_routing, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       taskId,
       'pending',
@@ -329,6 +335,7 @@ export async function tasksRoutes(app: FastifyInstance): Promise<void> {
       JSON.stringify(teamMembers),
       objective.trim(),
       serializeRegistrySnapshot(snapshot),
+      serializeSkillRoutingPolicy(skillRouting),
       now,
       now,
     )
@@ -339,6 +346,7 @@ export async function tasksRoutes(app: FastifyInstance): Promise<void> {
       objective: objective.trim(),
       teamMembersInput: teamMembers,
       snapshot,
+      skillRouting,
     })
 
     return reply.status(202).send({
@@ -403,6 +411,7 @@ export async function tasksRoutes(app: FastifyInstance): Promise<void> {
       objective: task.objective,
       plan: task.plan ? (JSON.parse(task.plan) as unknown) : null,
       registrySnapshot: parseRegistrySnapshot(task.registry_snapshot),
+      skillRouting: parseSkillRoutingPolicy(task.skill_routing) ?? null,
       pipelineId: task.pipeline_id,
       pipelineVersion: task.pipeline_version,
       result: task.result,
@@ -592,6 +601,7 @@ export async function tasksRoutes(app: FastifyInstance): Promise<void> {
     )
 
     const snapshot = parseRegistrySnapshot(task.registry_snapshot)
+    const skillRouting = parseSkillRoutingPolicy(task.skill_routing)
     void runOrchestration({
       taskId: id,
       objective: task.objective,
@@ -599,6 +609,7 @@ export async function tasksRoutes(app: FastifyInstance): Promise<void> {
       runVersion: nextRunVersion,
       teamMembersInput: teamMembers,
       snapshot,
+      skillRouting,
     })
 
     return reply.send({

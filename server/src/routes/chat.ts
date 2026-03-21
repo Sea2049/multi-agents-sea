@@ -5,12 +5,15 @@ import { runAgentStream } from '../runtime/agent-runner.js'
 import { getRuntimeProviderFromEnv, isProviderName, listProviderNames } from '../providers/index.js'
 import type { ProviderName } from '../providers/index.js'
 import { createRegistrySnapshot } from '../runtime/registry-snapshot-builder.js'
+import type { SkillRoutingPolicy } from '../runtime/registry-snapshot.js'
 import { parseRegistrySnapshot, serializeRegistrySnapshot } from '../runtime/registry-snapshot.js'
+import { parseSkillRoutingPolicy, sanitizeSkillRoutingPolicy, serializeSkillRoutingPolicy } from '../runtime/skill-routing.js'
 
 interface CreateSessionBody {
   agentId: string
   provider: ProviderName
   model: string
+  skillRouting?: SkillRoutingPolicy
 }
 
 interface SessionRow {
@@ -20,6 +23,7 @@ interface SessionRow {
   updated_at: number
   metadata: string | null
   registry_snapshot: string | null
+  skill_routing: string | null
 }
 
 interface MessageRow {
@@ -58,11 +62,12 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
     const now = Date.now()
     const metadata: SessionMetadata = { provider, model }
     const snapshot = createRegistrySnapshot()
+    const skillRouting = sanitizeSkillRoutingPolicy(request.body.skillRouting)
 
     db.prepare(
-      `INSERT INTO sessions (id, agent_id, created_at, updated_at, metadata, registry_snapshot)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-    ).run(id, agentId, now, now, JSON.stringify(metadata), serializeRegistrySnapshot(snapshot))
+      `INSERT INTO sessions (id, agent_id, created_at, updated_at, metadata, registry_snapshot, skill_routing)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(id, agentId, now, now, JSON.stringify(metadata), serializeRegistrySnapshot(snapshot), serializeSkillRoutingPolicy(skillRouting))
 
     return reply.status(201).send({ id, agentId, provider, model, createdAt: now })
   })
@@ -126,6 +131,7 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
         ? (JSON.parse(session.metadata) as SessionMetadata)
         : null
       const snapshot = parseRegistrySnapshot(session.registry_snapshot)
+      const skillRouting = parseSkillRoutingPolicy(session.skill_routing)
 
       if (!meta?.provider || !meta?.model) {
         return reply.status(400).send({ error: 'Session is missing provider or model metadata' })
@@ -158,6 +164,7 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
           provider,
           model: meta.model,
           snapshot,
+          skillRouting,
         })) {
           write(JSON.stringify(chunk))
           if (chunk.done) break

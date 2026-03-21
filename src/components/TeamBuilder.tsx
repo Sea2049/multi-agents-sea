@@ -250,7 +250,7 @@ function TeamBuilder({
         </div>
       </motion.section>
 
-      <section className="grid gap-6 xl:grid-cols-[1fr_0.9fr]">
+      <section className="grid gap-6 xl:grid-cols-[minmax(0,1.04fr)_minmax(0,0.96fr)]">
         <div className="panel-surface rounded-[30px] p-6">
           <div className="mb-4 flex items-center justify-between">
             <div>
@@ -385,19 +385,21 @@ function TeamBuilder({
 
         <div className="space-y-6">
           <section className="panel-surface rounded-[30px] p-6">
-            <div className="mb-4 flex items-center justify-between">
+            <div className="mb-4 flex items-start justify-between">
               <div>
                 <div className="mb-2 inline-flex rounded-full border border-white/[0.08] bg-white/[0.03] px-3 py-1 text-[11px] uppercase tracking-[0.22em] text-slate-400">
-                  Analysis Card
+                  编组分析
                 </div>
                 <h3 className="text-xl font-semibold text-white">团队摘要</h3>
               </div>
-              <span className="text-xs uppercase tracking-[0.2em] text-slate-500">
+              <span className="shrink-0 pt-0.5 text-xs uppercase tracking-[0.2em] text-slate-500">
                 {summary.capabilities.length} 条能力
               </span>
             </div>
             <div className="rounded-[24px] border border-white/[0.08] bg-black/20 p-4">
-              <p className="text-sm leading-7 text-slate-300">{summary.description}</p>
+              <p className="text-sm leading-7 text-slate-300">
+                当前团队姿态：{summary.posture}。建议优先补齐跨部门协作链路，再补垂直专家。
+              </p>
               <div className="mt-4 space-y-2">
                 {summary.capabilities.map((line) => (
                   <div
@@ -410,7 +412,7 @@ function TeamBuilder({
               </div>
               <div className="mt-5 rounded-[18px] border border-white/[0.08] bg-white/[0.03] px-4 py-3">
                 <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.2em] text-slate-500">
-                  <span>Cross-Functional Index</span>
+                    <span>跨职能指数</span>
                   <span>{compositionScore}%</span>
                 </div>
                 <div className="mt-3 h-2 rounded-full bg-white/[0.05]">
@@ -448,15 +450,15 @@ function TeamBuilder({
           </section>
 
           <section className="panel-surface rounded-[30px] p-6">
-            <div className="flex items-center justify-between gap-3">
+            <div className="flex items-start justify-between gap-3">
               <div>
                 <div className="mb-2 inline-flex rounded-full border border-white/[0.08] bg-white/[0.03] px-3 py-1 text-[11px] uppercase tracking-[0.22em] text-slate-400">
-                  Recommended Nodes
+                  推荐位点
                 </div>
                 <h3 className="text-xl font-semibold text-white">建议补位</h3>
                 <p className="text-sm text-slate-500">根据当前团队覆盖自动推荐。</p>
               </div>
-              <span className="text-xs uppercase tracking-[0.2em] text-slate-600">
+              <span className="shrink-0 pt-0.5 text-xs uppercase tracking-[0.2em] text-slate-600">
                 {recommendationPool.length} 条
               </span>
             </div>
@@ -467,6 +469,9 @@ function TeamBuilder({
               </div>
             ) : (
               <div className="mt-4 space-y-3">
+                <div className="rounded-[18px] border border-white/[0.08] bg-white/[0.03] px-3.5 py-2.5 text-xs text-slate-400">
+                  可直接拖拽推荐角色到左侧团队区，或点击「加入团队」快速补位。
+                </div>
                 {recommendationPool.map((agent) => {
                   const division = divisions.find((item) => item.id === agent.division);
                   const color = division?.color || '#6366f1';
@@ -496,7 +501,6 @@ function TeamBuilder({
                           <p className="text-sm font-medium text-white">{agent.name}</p>
                           <p className="mt-1 text-xs text-slate-500">{division?.nameZh || agent.division}</p>
                           <p className="mt-2 text-sm leading-6 text-slate-400">{agent.vibe}</p>
-                          <p className="mt-2 text-xs leading-5 text-slate-500">{agent.description}</p>
                         </div>
                       </div>
 
@@ -515,10 +519,10 @@ function TeamBuilder({
                             查看部门
                           </button>
                         )}
-                        <div className="ml-auto inline-flex items-center gap-1 text-[11px] uppercase tracking-[0.18em] text-slate-500">
-                          Drag to slot
+                        <span className="ml-auto inline-flex items-center gap-1 text-[11px] uppercase tracking-[0.18em] text-slate-500">
+                          拖拽补位
                           <ArrowRight size={12} />
-                        </div>
+                        </span>
                       </div>
                     </div>
                   );

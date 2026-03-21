@@ -68,6 +68,13 @@ export class ToolRegistry {
     return [...this.tools.values()].map((entry) => entry.definition)
   }
 
+  getDefinitionsWithOwner(): Array<{ definition: ToolDefinition; ownerId: string }> {
+    return [...this.tools.values()].map((entry) => ({
+      definition: entry.definition,
+      ownerId: entry.ownerId,
+    }))
+  }
+
   getVersion(): number {
     return this.version
   }

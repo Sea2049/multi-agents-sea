@@ -10,6 +10,19 @@ export interface SnapshotSkill {
   promptBlock: string
 }
 
+export interface ToolBinding {
+  toolName: string
+  sourceSkillId: string
+}
+
+export interface SkillRoutingPolicy {
+  defaultMode: 'all' | 'none'
+  perAgent?: Record<string, {
+    allow?: string[]
+    deny?: string[]
+  }>
+}
+
 export interface RegistrySnapshot {
   id: string
   createdAt: number
@@ -17,6 +30,7 @@ export interface RegistrySnapshot {
   toolsVersion: number
   skills: SnapshotSkill[]
   toolDefinitions: ToolDefinition[]
+  toolBindings: ToolBinding[]
 }
 
 export function createEmptyRegistrySnapshot(): RegistrySnapshot {
@@ -27,6 +41,7 @@ export function createEmptyRegistrySnapshot(): RegistrySnapshot {
     toolsVersion: 0,
     skills: [],
     toolDefinitions: [],
+    toolBindings: [],
   }
 }
 
@@ -44,7 +59,10 @@ export function parseRegistrySnapshot(value: string | null | undefined): Registr
       Array.isArray(parsed.skills) &&
       Array.isArray(parsed.toolDefinitions)
     ) {
-      return parsed
+      return {
+        ...parsed,
+        toolBindings: Array.isArray(parsed.toolBindings) ? parsed.toolBindings : [],
+      }
     }
   } catch {
     // Ignore invalid persisted payloads and fall back to an empty snapshot.

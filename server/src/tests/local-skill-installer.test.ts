@@ -9,7 +9,7 @@ import {
   uninstallImportedSkill,
 } from '../skills/local-installer.js'
 import { getSkillRegistry, initSkillRegistry, shutdownSkillRegistry } from '../skills/registry.js'
-import { closeDb, initDb } from '../storage/db.js'
+import { closeDb, getDb, initDb } from '../storage/db.js'
 
 const WORKSPACE_SKILLS_ENV = 'SEA_WORKSPACE_SKILLS_DIR'
 const USER_SKILLS_ENV = 'SEA_USER_SKILLS_DIR'
@@ -138,6 +138,34 @@ describe('local skill installer', () => {
     expect(skill?.trusted).toBe(false)
     expect(skill?.eligible).toBe(false)
     expect(skill?.disabledReasons).toContain('可执行 skill 尚未受信任')
+
+    rmSync(stagingRoot, { recursive: true, force: true })
+  })
+
+  it('creates skill_settings on first setEnabled with trusted=false default', async () => {
+    const stagingRoot = makeTmpDir('sea-staging-')
+    const stagingSkillDir = writeSkill(stagingRoot, 'first-toggle-skill')
+
+    await installLocalSkillFromStaging(stagingSkillDir, 'first-toggle-skill.md')
+
+    const registry = getSkillRegistry()
+    await expect(registry.setEnabled('first-toggle-skill', false)).resolves.toBeDefined()
+
+    const firstRow = getDb()
+      .prepare('SELECT enabled, trusted FROM skill_settings WHERE skill_id = ?')
+      .get('first-toggle-skill') as { enabled: number; trusted: number } | undefined
+    expect(firstRow).toBeDefined()
+    expect(firstRow?.enabled).toBe(0)
+    expect(firstRow?.trusted).toBe(0)
+
+    await expect(registry.setEnabled('first-toggle-skill', true)).resolves.toBeDefined()
+
+    const secondRow = getDb()
+      .prepare('SELECT enabled, trusted FROM skill_settings WHERE skill_id = ?')
+      .get('first-toggle-skill') as { enabled: number; trusted: number } | undefined
+    expect(secondRow).toBeDefined()
+    expect(secondRow?.enabled).toBe(1)
+    expect(secondRow?.trusted).toBe(0)
 
     rmSync(stagingRoot, { recursive: true, force: true })
   })

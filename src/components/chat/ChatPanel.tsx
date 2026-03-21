@@ -358,6 +358,7 @@ export default function ChatPanel({
       {agent && division && (
         <>
           <motion.div
+            key="chat-panel-backdrop"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -366,6 +367,7 @@ export default function ChatPanel({
           />
 
           <motion.aside
+            key="chat-panel-drawer"
             initial={{ opacity: 0, x: 40 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: 40 }}

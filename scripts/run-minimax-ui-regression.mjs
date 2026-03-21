@@ -44,7 +44,6 @@ function runCommand(command, args, options = {}) {
     const child = spawn(command, args, {
       cwd: rootDir,
       stdio: 'inherit',
-      shell: true,
       ...options,
     });
 
@@ -64,11 +63,12 @@ async function main() {
 
   const env = { ...process.env, [ENV_KEY]: minimaxKey };
   const tests = ['browser-task-ui-minimax.test.ts', 'electron-task-ui-minimax.test.ts'];
+  const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 
   console.log('[minimax-ui-regression] Starting MiniMax UI regression tests...');
   for (const testFile of tests) {
     console.log(`[minimax-ui-regression] Running ${testFile}`);
-    const code = await runCommand('npm', ['run', '--prefix', 'server', 'test', '--', testFile], {
+    const code = await runCommand(npmCommand, ['run', '--prefix', 'server', 'test', '--', testFile], {
       env,
     });
     if (code !== 0) {

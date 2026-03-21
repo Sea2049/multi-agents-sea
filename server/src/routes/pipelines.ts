@@ -8,7 +8,9 @@ import { runPipeline, approvePipelineGate } from '../pipelines/engine.js'
 import { createPipeline, deletePipeline, getPipelineById, listPipelines, updatePipeline } from '../pipelines/store.js'
 import { pipelineToTaskPlan, type PipelineDefinition, type PipelineStep } from '../pipelines/types.js'
 import { createRegistrySnapshot } from '../runtime/registry-snapshot-builder.js'
+import type { SkillRoutingPolicy } from '../runtime/registry-snapshot.js'
 import { serializeRegistrySnapshot } from '../runtime/registry-snapshot.js'
+import { sanitizeSkillRoutingPolicy, serializeSkillRoutingPolicy } from '../runtime/skill-routing.js'
 import {
   broadcastTaskEvent,
   clearTaskSseSubscribers,
@@ -33,6 +35,7 @@ interface RunPipelineBody {
   objective?: string
   provider?: string
   model?: string
+  skillRouting?: SkillRoutingPolicy
 }
 
 interface TaskRowExists {
@@ -332,8 +335,9 @@ async function runPipelineTask(params: {
   definition: PipelineDefinition
   snapshot: ReturnType<typeof createRegistrySnapshot>
   runtimeDefaults?: { provider?: string; model?: string }
+  skillRouting?: SkillRoutingPolicy
 }): Promise<void> {
-  const { taskId, objective, definition, runtimeDefaults, snapshot } = params
+  const { taskId, objective, definition, runtimeDefaults, snapshot, skillRouting } = params
   const plan = pipelineToTaskPlan(definition, taskId)
 
   updateTaskStatus(taskId, 'running', { plan: JSON.stringify(plan) })
@@ -353,6 +357,7 @@ async function runPipelineTask(params: {
       objective,
       definition,
       snapshot,
+      skillRouting,
       runtimeDefaults,
       providerFactory: (providerName) => getRuntimeProviderFromEnv(providerName),
       onEvent: (event) => {
@@ -535,10 +540,11 @@ export async function pipelinesRoutes(app: FastifyInstance): Promise<void> {
     const db = getDb()
     const snapshot = createRegistrySnapshot()
     const objective = request.body.objective?.trim() || `Run pipeline: ${pipeline.name}`
+    const skillRouting = sanitizeSkillRoutingPolicy(request.body.skillRouting)
 
     db.prepare(`
-      INSERT INTO tasks (id, status, kind, team_members, objective, registry_snapshot, pipeline_id, pipeline_version, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO tasks (id, status, kind, team_members, objective, registry_snapshot, skill_routing, pipeline_id, pipeline_version, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       taskId,
       'pending',
@@ -546,6 +552,7 @@ export async function pipelinesRoutes(app: FastifyInstance): Promise<void> {
       JSON.stringify([]),
       objective,
       serializeRegistrySnapshot(snapshot),
+      serializeSkillRoutingPolicy(skillRouting),
       pipeline.id,
       pipeline.version,
       now,
@@ -558,6 +565,7 @@ export async function pipelinesRoutes(app: FastifyInstance): Promise<void> {
       definition: pipeline.definition,
       snapshot,
       runtimeDefaults,
+      skillRouting,
     })
 
     return reply.status(202).send({

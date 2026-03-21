@@ -121,6 +121,7 @@ export interface TaskRecord {
   updatedAt: number;
   threadMessages?: TaskThreadMessage[];
   steps?: TaskStepRecord[];
+  skillRouting?: SkillRoutingPolicy | null;
 }
 
 export interface TaskThreadMessage {
@@ -225,6 +226,15 @@ export interface TaskExecutionEvent {
 export interface CreateTaskParams {
   objective: string;
   teamMembers: Array<{ agentId: string; provider: string; model: string }>;
+  skillRouting?: SkillRoutingPolicy;
+}
+
+export interface SkillRoutingPolicy {
+  defaultMode: 'all' | 'none';
+  perAgent?: Record<string, {
+    allow?: string[];
+    deny?: string[];
+  }>;
 }
 
 export interface ModelInfo {
@@ -367,6 +377,17 @@ export interface LocalSkillInstallResult {
 
 export const DEFAULT_SERVER_BASE_URL = 'http://127.0.0.1:3701';
 
+export interface ApiClientHttpErrorPayload {
+  error?: string
+  code?: string
+  retryable?: boolean
+}
+
+export interface ApiClientHttpError extends Error {
+  status?: number
+  payload?: ApiClientHttpErrorPayload
+}
+
 async function getBaseUrl(): Promise<string> {
   if (typeof window !== 'undefined') {
     const w = window as unknown as { api?: { getServerBaseUrl?: () => Promise<string> } };
@@ -400,7 +421,14 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText);
-    throw new Error(`HTTP ${res.status}: ${text}`);
+    const error = new Error(`HTTP ${res.status}: ${text}`) as ApiClientHttpError;
+    error.status = res.status;
+    try {
+      error.payload = JSON.parse(text) as ApiClientHttpErrorPayload;
+    } catch {
+      // ignore non-JSON response body
+    }
+    throw error;
   }
 
   if (res.status === 204 || res.status === 205) {
@@ -416,10 +444,20 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export const apiClient = {
-  async createSession(agentId: string, provider: string, model: string): Promise<Session> {
+  async createSession(
+    agentId: string,
+    provider: string,
+    model: string,
+    options?: { skillRouting?: SkillRoutingPolicy },
+  ): Promise<Session> {
     return request<Session>('/api/sessions', {
       method: 'POST',
-      body: JSON.stringify({ agentId, provider, model }),
+      body: JSON.stringify({
+        agentId,
+        provider,
+        model,
+        skillRouting: options?.skillRouting,
+      }),
     });
   },
 
@@ -911,6 +949,7 @@ export const apiClient = {
       objective?: string;
       provider?: string;
       model?: string;
+      skillRouting?: SkillRoutingPolicy;
     }): Promise<{ id: string; status: string; kind: string; objective: string; pipelineId: string; pipelineVersion: number; createdAt: number }> {
       return request(`/api/pipelines/${encodeURIComponent(id)}/run`, {
         method: 'POST',
