@@ -2,7 +2,7 @@
 
 > agent-sea：一个用于浏览、搜索和编排 144+ 个 AI 专家角色的桌面可视化应用程序
 
-**当前版本**: V2.2.3 · **文档更新**: 2026-03-21 · **[变更日志](CHANGELOG.md)**
+**当前版本**: V2.2.4 · **文档/发布基准日**（本机系统日期）: 2026-03-21（周六） · **[变更日志](CHANGELOG.md)**
 
 > 发布提醒：本次为硬切换改名版本。Windows 会将 `agent-sea` 识别为一个新应用，且默认本地数据库文件已切换为 `agent-sea.db`；旧的 `agency-agents.db` 不会自动迁移。
 
@@ -130,6 +130,21 @@ npm run electron:build:installer
 - `APP_PORT`: 服务器端口（默认: 3701）
 - `APP_DB_PATH`: 数据库文件路径（例如 `./agent-sea.db`；未设置时使用应用默认本地数据库路径）
 - `VITE_DEV_SERVER_URL` / `ELECTRON_DISABLE_DEVTOOLS`: Electron 开发行为（见 `.env.example`）
+- `SEA_MARKET_PROVIDERS`: 外部 Skill 市场来源（默认 `clawhub`）
+- `SEA_MARKET_CLAWHUB_BASE_URL`: ClawHub API 基础地址（默认 `https://clawhub.ai`）
+- `SEA_MARKET_HTTP_TIMEOUT_MS` / `SEA_MARKET_RESULT_LIMIT`: 市场请求超时与结果上限
+- `SEA_MARKET_RETRY_MAX_ATTEMPTS` / `SEA_MARKET_RETRY_BASE_DELAY_MS`: 外部市场 429/5xx 的重试与退避参数
+- `SEA_MARKET_SEARCH_CACHE_TTL_MS` / `SEA_MARKET_BUNDLE_CACHE_TTL_MS`: 市场搜索与 bundle 下载的本地缓存 TTL
+- `SEA_MARKET_SEARCH_CACHE_MAX_ENTRIES` / `SEA_MARKET_BUNDLE_CACHE_MAX_ENTRIES`: 市场缓存 LRU 上限，避免长时间运行内存增长
+
+### 外部 Skill 市场说明
+
+- `发现市场` 已切换为 provider 架构，不再依赖单一 `skills-index.json` 远程文件。
+- 第一阶段默认接入 `ClawHub`，`SkillHub` 预留扩展位，后续可按相同协议接入。
+- 第三方技能安装前会执行兼容性预检；被判定为不兼容或高风险的技能会被阻止安装。
+- 外部来源技能安装后默认处于禁用状态，需用户手动确认启用。
+- 外部市场请求内置 429 场景重试+退避，并在高峰期优先回退本地缓存结果，降低限流抖动影响。
+- 市场 provider 会输出结构化日志（缓存命中、缓存回退、LRU 淘汰、重试退避、重试耗尽），便于线上观察兜底频率。
 
 ### 日志
 

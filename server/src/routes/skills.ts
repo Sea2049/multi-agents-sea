@@ -7,7 +7,6 @@ import type { Multipart } from '@fastify/multipart'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import yauzl from 'yauzl'
 import { getSkillRegistry } from '../skills/registry.js'
-import { rankIndexEntries } from '../skills/index-ranker.js'
 import {
   installRemoteSkill,
   uninstallRemoteSkill,
@@ -19,17 +18,16 @@ import {
   previewLocalSkillFromStaging,
   uninstallImportedSkill,
 } from '../skills/local-installer.js'
-import type { RemoteSkillIndexEntry } from '../skills/types.js'
+import {
+  installSkillFromMarket,
+  previewSkillFromMarket,
+  searchSkillMarket,
+} from '../skills/market/index.js'
+import type { SkillMarketProvider } from '../skills/market/types.js'
 
-const SKILLS_INDEX_URL = process.env['SEA_SKILLS_INDEX_URL']
-  ?? 'https://raw.githubusercontent.com/multi-agents-sea/skills-index/main/skills-index.json'
 const LOCAL_IMPORT_BODY_LIMIT = 50 * 1024 * 1024
 const LOCAL_IMPORT_MAX_FILE_SIZE = 10 * 1024 * 1024
 const LOCAL_IMPORT_MAX_TOTAL_SIZE = 50 * 1024 * 1024
-const SKILLS_INDEX_CACHE_TTL_MS = 5 * 60 * 1000
-
-let cachedSkillsIndex: RemoteSkillIndexEntry[] | null = null
-let cachedSkillsIndexAt = 0
 
 interface MultipartStagingResult {
   stagingDir: string
@@ -196,29 +194,14 @@ async function buildStagingFromMultipart(request: FastifyRequest): Promise<Multi
   }
 }
 
-async function fetchSkillsIndexWithCache(): Promise<RemoteSkillIndexEntry[]> {
-  const now = Date.now()
-  if (cachedSkillsIndex && now - cachedSkillsIndexAt < SKILLS_INDEX_CACHE_TTL_MS) {
-    return cachedSkillsIndex
+function toSkillMarketProvider(value: string | undefined): SkillMarketProvider | null {
+  if (!value) {
+    return null
   }
-
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 30_000)
-  try {
-    const res = await fetch(SKILLS_INDEX_URL, { signal: controller.signal })
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status}`)
-    }
-    const data = await res.json() as unknown
-    if (!Array.isArray(data)) {
-      throw new Error('Skills index must be an array')
-    }
-    cachedSkillsIndex = data as RemoteSkillIndexEntry[]
-    cachedSkillsIndexAt = now
-    return cachedSkillsIndex
-  } finally {
-    clearTimeout(timer)
+  if (value === 'clawhub' || value === 'skillhub') {
+    return value
   }
+  return null
 }
 
 export async function skillsRoutes(app: FastifyInstance): Promise<void> {
@@ -286,15 +269,41 @@ export async function skillsRoutes(app: FastifyInstance): Promise<void> {
 
   app.get<{ Querystring: { q?: string } }>('/skills/index', async (request, reply) => {
     try {
-      const data = await fetchSkillsIndexWithCache()
-      const query = request.query.q?.trim() ?? ''
-      if (!query) {
-        return reply.send(data)
-      }
-      const ranked = rankIndexEntries(query, data)
-      return reply.send(ranked.map((item) => item.entry))
+      const query = request.query.q?.trim()
+      const data = await searchSkillMarket({ query })
+      return reply.send(data)
     } catch (err) {
-      return reply.status(502).send({ error: `Failed to fetch skills index: ${err instanceof Error ? err.message : String(err)}` })
+      return reply.status(502).send({ error: `Failed to fetch skill market: ${err instanceof Error ? err.message : String(err)}` })
+    }
+  })
+
+  app.post<{ Body: { provider?: string; providerSkillId?: string } }>('/skills/market/preview', async (request, reply) => {
+    const provider = toSkillMarketProvider(request.body?.provider)
+    const providerSkillId = request.body?.providerSkillId?.trim()
+    if (!provider || !providerSkillId) {
+      return reply.status(400).send({ error: 'Body must include "provider" and "providerSkillId"' })
+    }
+
+    try {
+      const preview = await previewSkillFromMarket({ provider, providerSkillId })
+      return reply.send(preview)
+    } catch (err) {
+      return reply.status(400).send({ error: `Market preview failed: ${err instanceof Error ? err.message : String(err)}` })
+    }
+  })
+
+  app.post<{ Body: { provider?: string; providerSkillId?: string } }>('/skills/market/install', async (request, reply) => {
+    const provider = toSkillMarketProvider(request.body?.provider)
+    const providerSkillId = request.body?.providerSkillId?.trim()
+    if (!provider || !providerSkillId) {
+      return reply.status(400).send({ error: 'Body must include "provider" and "providerSkillId"' })
+    }
+
+    try {
+      const result = await installSkillFromMarket({ provider, providerSkillId })
+      return reply.send(result)
+    } catch (err) {
+      return reply.status(400).send({ error: `Market install failed: ${err instanceof Error ? err.message : String(err)}` })
     }
   })
 

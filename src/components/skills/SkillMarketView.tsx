@@ -1,12 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Download, RefreshCw, Search, ShieldAlert, Trash2, Upload, Tag } from 'lucide-react'
-import {
-  apiClient,
-  type RemoteSkillIndexEntry,
-  type RemoteSkillRecord,
-  type RemoteSkillUpdateCheck,
-} from '../../lib/api-client'
+import { AlertTriangle, Ban, CheckCircle2, Download, RefreshCw, Search, ShieldAlert, Tag } from 'lucide-react'
+import { apiClient, type SkillMarketEntry, type SkillMarketPreview, type SkillRecord } from '../../lib/api-client'
 
 function TagBadge({ tag }: { tag: string }) {
   return (
@@ -17,16 +12,33 @@ function TagBadge({ tag }: { tag: string }) {
 }
 
 export function SkillMarketView() {
-  const [indexEntries, setIndexEntries] = useState<RemoteSkillIndexEntry[]>([])
-  const [displayEntries, setDisplayEntries] = useState<RemoteSkillIndexEntry[]>([])
-  const [installedSkills, setInstalledSkills] = useState<RemoteSkillRecord[]>([])
-  const [updateChecks, setUpdateChecks] = useState<RemoteSkillUpdateCheck[]>([])
+  const [indexEntries, setIndexEntries] = useState<SkillMarketEntry[]>([])
+  const [displayEntries, setDisplayEntries] = useState<SkillMarketEntry[]>([])
+  const [installedSkills, setInstalledSkills] = useState<SkillRecord[]>([])
+  const [previewMap, setPreviewMap] = useState<Record<string, SkillMarketPreview>>({})
   const [loading, setLoading] = useState(true)
   const [searching, setSearching] = useState(false)
-  const [checkingUpdates, setCheckingUpdates] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [busyId, setBusyId] = useState<string | null>(null)
+
+  const normalizeError = useCallback((raw: unknown, fallback: string): string => {
+    if (!(raw instanceof Error)) return fallback
+    const text = raw.message
+    const marker = text.indexOf(':')
+    if (marker === -1) return text
+    const payload = text.slice(marker + 1).trim()
+    if (!payload.startsWith('{')) return text
+    try {
+      const parsed = JSON.parse(payload) as { error?: string }
+      if (typeof parsed.error === 'string' && parsed.error.trim()) {
+        return parsed.error
+      }
+      return text
+    } catch {
+      return text
+    }
+  }, [])
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -34,46 +46,24 @@ export function SkillMarketView() {
     try {
       const [index, installed] = await Promise.all([
         apiClient.skills.getIndex(),
-        apiClient.skills.listRemote(),
+        apiClient.skills.list(),
       ])
       setIndexEntries(index)
       setDisplayEntries(index)
-      setInstalledSkills(installed)
+      setInstalledSkills(installed.skills)
+      setPreviewMap({})
     } catch (err) {
-      setError(err instanceof Error ? err.message : '加载 Skill 市场失败')
+      setError(normalizeError(err, '加载 Skill 市场失败'))
     } finally {
       setLoading(false)
     }
-  }, [])
-
-  const checkUpdates = useCallback(async () => {
-    setCheckingUpdates(true)
-    try {
-      const checks = await apiClient.skills.checkUpdates()
-      setUpdateChecks(checks)
-    } catch {
-      // silently ignore update check errors
-    } finally {
-      setCheckingUpdates(false)
-    }
-  }, [])
+  }, [normalizeError])
 
   useEffect(() => {
     void loadData()
   }, [loadData])
 
-  useEffect(() => {
-    if (installedSkills.length > 0) {
-      void checkUpdates()
-    }
-  }, [installedSkills, checkUpdates])
-
   const installedIds = useMemo(() => new Set(installedSkills.map((s) => s.id)), [installedSkills])
-
-  const updateAvailableIds = useMemo(
-    () => new Set(updateChecks.filter((c) => c.hasUpdate).map((c) => c.id)),
-    [updateChecks],
-  )
 
   useEffect(() => {
     const query = searchQuery.trim()
@@ -88,7 +78,7 @@ export function SkillMarketView() {
           setDisplayEntries(entries)
         })
         .catch((err) => {
-          setError(err instanceof Error ? err.message : '自然语言搜索失败')
+          setError(normalizeError(err, '自然语言搜索失败'))
         })
         .finally(() => {
           setSearching(false)
@@ -99,52 +89,39 @@ export function SkillMarketView() {
       clearTimeout(timer)
       setSearching(false)
     }
-  }, [indexEntries, searchQuery])
+  }, [indexEntries, normalizeError, searchQuery])
 
-  const handleInstall = useCallback(async (entry: RemoteSkillIndexEntry) => {
-    setBusyId(entry.id)
+  const handlePreview = useCallback(async (entry: SkillMarketEntry) => {
+    setBusyId(`preview:${entry.id}`)
     setError(null)
     try {
-      await apiClient.skills.installRemote(entry.url)
-      await loadData()
+      const preview = await apiClient.skills.previewMarket(entry.provider, entry.providerSkillId)
+      setPreviewMap((prev) => ({ ...prev, [entry.id]: preview }))
     } catch (err) {
-      setError(err instanceof Error ? err.message : `安装 "${entry.name}" 失败`)
+      setError(normalizeError(err, `预检 "${entry.name}" 失败`))
     } finally {
       setBusyId(null)
     }
-  }, [loadData])
+  }, [normalizeError])
 
-  const handleUpdate = useCallback(async (entry: RemoteSkillIndexEntry) => {
-    setBusyId(`update:${entry.id}`)
+  const handleInstall = useCallback(async (entry: SkillMarketEntry) => {
+    setBusyId(`install:${entry.id}`)
     setError(null)
     try {
-      await apiClient.skills.updateRemote(entry.id)
+      await apiClient.skills.installMarket(entry.provider, entry.providerSkillId)
       await loadData()
     } catch (err) {
-      setError(err instanceof Error ? err.message : `更新 "${entry.name}" 失败`)
+      setError(normalizeError(err, `安装 "${entry.name}" 失败`))
     } finally {
       setBusyId(null)
     }
-  }, [loadData])
-
-  const handleUninstall = useCallback(async (entry: RemoteSkillIndexEntry) => {
-    setBusyId(`uninstall:${entry.id}`)
-    setError(null)
-    try {
-      await apiClient.skills.uninstallRemote(entry.id)
-      await loadData()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : `卸载 "${entry.name}" 失败`)
-    } finally {
-      setBusyId(null)
-    }
-  }, [loadData])
+  }, [loadData, normalizeError])
 
   const stats = useMemo(() => ({
     total: indexEntries.length,
-    installed: installedSkills.length,
-    updates: updateChecks.filter((c) => c.hasUpdate).length,
-  }), [indexEntries.length, installedSkills.length, updateChecks])
+    installed: installedSkills.filter((skill) => skill.source === 'imported').length,
+    ready: Object.values(previewMap).filter((preview) => preview.installability === 'installable').length,
+  }), [indexEntries.length, installedSkills, previewMap])
 
   return (
     <div className="space-y-6 px-2 py-2">
@@ -164,19 +141,11 @@ export function SkillMarketView() {
               Skill 市场
             </h2>
             <p className="mt-2 max-w-3xl text-sm leading-7 text-slate-400">
-              从远程仓库发现、安装和管理 Skills。远程 Skills 在 Worker 沙箱中执行，确保安全隔离。
+              聚合外部 Skill 市场并执行兼容性与安全预检。第三方技能安装后默认禁用，需你确认后再启用。
             </p>
           </div>
 
           <div className="flex shrink-0 gap-2">
-            <button
-              onClick={() => void checkUpdates()}
-              disabled={checkingUpdates || installedSkills.length === 0}
-              className="interactive-lift inline-flex items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.03] px-4 py-2 text-sm text-slate-300 hover:border-white/[0.12] hover:bg-white/[0.05] hover:text-white disabled:opacity-40"
-            >
-              <Upload size={15} className={checkingUpdates ? 'animate-spin' : ''} />
-              检查更新
-            </button>
             <button
               onClick={() => void loadData()}
               disabled={loading}
@@ -192,8 +161,8 @@ export function SkillMarketView() {
         <div className="mt-5 grid gap-3 md:grid-cols-3">
           {[
             { label: '可用 Skills', value: stats.total },
-            { label: '已安装', value: stats.installed },
-            { label: '待更新', value: stats.updates },
+            { label: '已安装(导入)', value: stats.installed },
+            { label: '可直接安装', value: stats.ready },
           ].map((item) => (
             <div
               key={item.label}
@@ -250,12 +219,11 @@ export function SkillMarketView() {
       {/* Skill Cards */}
       <AnimatePresence initial={false}>
         {displayEntries.map((entry) => {
-          const isInstalled = installedIds.has(entry.id)
-          const hasUpdate = updateAvailableIds.has(entry.id)
-          const isInstallingNow = busyId === entry.id
-          const isUpdatingNow = busyId === `update:${entry.id}`
-          const isUninstallingNow = busyId === `uninstall:${entry.id}`
-          const isBusy = isInstallingNow || isUpdatingNow || isUninstallingNow
+          const preview = previewMap[entry.id]
+          const isInstalled = preview ? installedIds.has(preview.localPreview.skillId) : false
+          const isPreviewing = busyId === `preview:${entry.id}`
+          const isInstalling = busyId === `install:${entry.id}`
+          const isBusy = isPreviewing || isInstalling
 
           return (
             <motion.section
@@ -280,13 +248,8 @@ export function SkillMarketView() {
                             已安装
                           </span>
                         )}
-                        {hasUpdate && (
-                          <span className="rounded-full border border-amber-400/18 bg-amber-400/[0.08] px-2.5 py-0.5 text-[11px] text-amber-200">
-                            有更新
-                          </span>
-                        )}
                       </div>
-                      <p className="text-sm text-slate-400">by {entry.author}{entry.version ? ` · v${entry.version}` : ''}</p>
+                      <p className="text-sm text-slate-400">by {entry.author}{entry.version ? ` · v${entry.version}` : ''} · {entry.provider}</p>
                     </div>
                   </div>
 
@@ -302,51 +265,98 @@ export function SkillMarketView() {
 
                   <div className="mt-3 flex items-center gap-1.5 text-xs text-slate-500">
                     <ShieldAlert size={12} />
-                    <span>远程 Skills 在 Worker 沙箱中执行</span>
+                    <span>先预检再安装，第三方技能默认禁用</span>
                   </div>
+
+                  {entry.moderation && (
+                    <div className="mt-2">
+                      <span
+                        className={`rounded-full border px-2.5 py-0.5 text-[11px] ${
+                          entry.moderation.verdict === 'clean'
+                            ? 'border-emerald-400/18 bg-emerald-400/[0.08] text-emerald-200'
+                            : entry.moderation.verdict === 'suspicious'
+                              ? 'border-rose-400/18 bg-rose-400/[0.08] text-rose-200'
+                              : 'border-amber-400/18 bg-amber-400/[0.08] text-amber-200'
+                        }`}
+                      >
+                        {entry.moderation.verdict === 'clean'
+                          ? '已审计'
+                          : entry.moderation.verdict === 'suspicious'
+                            ? '疑似风险'
+                            : '未知风险'}
+                      </span>
+                    </div>
+                  )}
+
+                  {preview && (
+                    <div className="mt-3 rounded-[16px] border border-white/[0.08] bg-white/[0.03] px-4 py-3">
+                      <div className="flex flex-wrap items-center gap-2 text-xs">
+                        <span
+                          className={`rounded-full border px-2.5 py-0.5 ${
+                            preview.compatibility === 'compatible'
+                              ? 'border-emerald-400/18 bg-emerald-400/[0.08] text-emerald-200'
+                              : preview.compatibility === 'needs_review'
+                                ? 'border-amber-400/18 bg-amber-400/[0.08] text-amber-200'
+                                : 'border-rose-400/18 bg-rose-400/[0.08] text-rose-200'
+                          }`}
+                        >
+                          兼容性: {preview.compatibility}
+                        </span>
+                        <span className="rounded-full border border-white/[0.08] bg-white/[0.03] px-2.5 py-0.5 text-slate-300">
+                          安装状态: {preview.installability}
+                        </span>
+                      </div>
+                      {preview.reasons.length > 0 && (
+                        <ul className="mt-2 space-y-1 text-xs text-rose-200">
+                          {preview.reasons.map((reason) => (
+                            <li key={reason}>- {reason}</li>
+                          ))}
+                        </ul>
+                      )}
+                      {preview.warnings.length > 0 && (
+                        <ul className="mt-2 space-y-1 text-xs text-amber-200">
+                          {preview.warnings.map((warning) => (
+                            <li key={warning}>- {warning}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex shrink-0 flex-col gap-2">
-                  {!isInstalled ? (
-                    <button
-                      onClick={() => void handleInstall(entry)}
-                      disabled={isBusy}
-                      className="interactive-lift inline-flex items-center gap-2 rounded-full border border-violet-400/18 bg-violet-400/[0.08] px-3.5 py-2 text-xs text-violet-100 hover:bg-violet-400/[0.15] disabled:opacity-50"
-                    >
-                      {isInstallingNow ? (
-                        <RefreshCw size={13} className="animate-spin" />
-                      ) : (
-                        <Download size={13} />
-                      )}
-                      {isInstallingNow ? '安装中…' : '安装'}
-                    </button>
+                  {isInstalled ? (
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/18 bg-emerald-400/[0.08] px-3.5 py-2 text-xs text-emerald-100">
+                      <CheckCircle2 size={13} />
+                      已安装
+                    </span>
                   ) : (
                     <>
-                      {hasUpdate && (
-                        <button
-                          onClick={() => void handleUpdate(entry)}
-                          disabled={isBusy}
-                          className="interactive-lift inline-flex items-center gap-2 rounded-full border border-amber-400/18 bg-amber-400/[0.08] px-3.5 py-2 text-xs text-amber-100 hover:bg-amber-400/[0.15] disabled:opacity-50"
-                        >
-                          {isUpdatingNow ? (
-                            <RefreshCw size={13} className="animate-spin" />
-                          ) : (
-                            <Upload size={13} />
-                          )}
-                          {isUpdatingNow ? '更新中…' : '更新'}
-                        </button>
-                      )}
                       <button
-                        onClick={() => void handleUninstall(entry)}
+                        onClick={() => void handlePreview(entry)}
                         disabled={isBusy}
-                        className="interactive-lift inline-flex items-center gap-2 rounded-full border border-rose-400/18 bg-rose-400/[0.08] px-3.5 py-2 text-xs text-rose-200 hover:bg-rose-400/[0.15] disabled:opacity-50"
+                        className="interactive-lift inline-flex items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.03] px-3.5 py-2 text-xs text-slate-200 hover:bg-white/[0.06] disabled:opacity-50"
                       >
-                        {isUninstallingNow ? (
+                        {isPreviewing ? (
                           <RefreshCw size={13} className="animate-spin" />
                         ) : (
-                          <Trash2 size={13} />
+                          <AlertTriangle size={13} />
                         )}
-                        {isUninstallingNow ? '卸载中…' : '卸载'}
+                        {isPreviewing ? '预检中…' : '预检'}
+                      </button>
+                      <button
+                        onClick={() => void handleInstall(entry)}
+                        disabled={isBusy || preview?.installability !== 'installable'}
+                        className="interactive-lift inline-flex items-center gap-2 rounded-full border border-violet-400/18 bg-violet-400/[0.08] px-3.5 py-2 text-xs text-violet-100 hover:bg-violet-400/[0.15] disabled:opacity-50"
+                      >
+                        {isInstalling ? (
+                          <RefreshCw size={13} className="animate-spin" />
+                        ) : preview?.installability === 'installable' ? (
+                          <Download size={13} />
+                        ) : (
+                          <Ban size={13} />
+                        )}
+                        {isInstalling ? '安装中…' : '安装'}
                       </button>
                     </>
                   )}

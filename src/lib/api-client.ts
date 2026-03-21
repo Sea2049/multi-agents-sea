@@ -249,14 +249,61 @@ export interface RemoteSkillRecord {
   updatedAt: number;
 }
 
-export interface RemoteSkillIndexEntry {
+export type SkillMarketProvider = 'clawhub' | 'skillhub';
+
+export interface SkillMarketEntry {
   id: string;
+  provider: SkillMarketProvider;
+  providerSkillId: string;
   name: string;
   description: string;
   author: string;
   url: string;
   tags: string[];
   version?: string;
+  stats?: {
+    downloads?: number;
+    installsCurrent?: number;
+    installsAllTime?: number;
+    stars?: number;
+  };
+  moderation?: {
+    verdict: 'clean' | 'suspicious' | 'unknown';
+    summary?: string;
+  };
+}
+
+export interface SkillMarketPreview {
+  provider: SkillMarketProvider;
+  providerSkillId: string;
+  compatibility: 'compatible' | 'needs_review' | 'incompatible';
+  installability: 'installable' | 'preview_only' | 'blocked';
+  reasons: string[];
+  warnings: string[];
+  localPreview: {
+    skillId: string;
+    name: string;
+    description: string;
+    version?: string;
+    mode: 'prompt-only' | 'tool-contributor';
+    files: string[];
+    handlers: string[];
+    conflict: {
+      hasConflict: boolean;
+      existingSource?: SkillRecord['source'];
+      existingFilePath?: string;
+      willOverride: boolean;
+    };
+  };
+}
+
+export interface SkillMarketInstallResult {
+  provider: SkillMarketProvider;
+  providerSkillId: string;
+  skillId: string;
+  name: string;
+  importedAt: number;
+  enabled: boolean;
 }
 
 export interface RemoteSkillInstallResult {
@@ -561,15 +608,29 @@ export const apiClient = {
       })
     },
 
-    getIndex(query?: string): Promise<RemoteSkillIndexEntry[]> {
+    getIndex(query?: string): Promise<SkillMarketEntry[]> {
       if (!query?.trim()) {
-        return request<RemoteSkillIndexEntry[]>('/api/skills/index')
+        return request<SkillMarketEntry[]>('/api/skills/index')
       }
-      return request<RemoteSkillIndexEntry[]>(`/api/skills/index?q=${encodeURIComponent(query.trim())}`)
+      return request<SkillMarketEntry[]>(`/api/skills/index?q=${encodeURIComponent(query.trim())}`)
     },
 
-    searchIndex(query: string): Promise<RemoteSkillIndexEntry[]> {
+    searchIndex(query: string): Promise<SkillMarketEntry[]> {
       return apiClient.skills.getIndex(query)
+    },
+
+    previewMarket(provider: SkillMarketProvider, providerSkillId: string): Promise<SkillMarketPreview> {
+      return request<SkillMarketPreview>('/api/skills/market/preview', {
+        method: 'POST',
+        body: JSON.stringify({ provider, providerSkillId }),
+      });
+    },
+
+    installMarket(provider: SkillMarketProvider, providerSkillId: string): Promise<SkillMarketInstallResult> {
+      return request<SkillMarketInstallResult>('/api/skills/market/install', {
+        method: 'POST',
+        body: JSON.stringify({ provider, providerSkillId }),
+      });
     },
 
     listRemote(): Promise<RemoteSkillRecord[]> {
