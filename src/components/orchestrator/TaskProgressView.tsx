@@ -186,17 +186,18 @@ function TaskProgressView({ taskId, onClose, onOpenTask }: TaskProgressViewProps
       }
     });
 
-    if (event.stepId) {
+    const stepId = event.stepId;
+    if (stepId) {
       setSteps((prev) => {
-        const existing = prev.find((s) => s.id === event.stepId);
+        const existing = prev.find((s) => s.id === stepId);
         const updated: TaskStepRecord = existing
           ? { ...existing }
           : {
-            id: event.stepId,
+            id: stepId,
             runVersion: event.runVersion,
             agentId: event.agentId ?? 'unknown',
             status: 'pending',
-            objective: event.stepId,
+            objective: stepId,
           };
         if (event.type === 'step_started') {
           updated.status = 'running';
@@ -221,7 +222,7 @@ function TaskProgressView({ taskId, onClose, onOpenTask }: TaskProgressViewProps
         if (!existing) {
           return [...prev, updated];
         }
-        return prev.map((s) => (s.id === event.stepId ? updated : s));
+        return prev.map((s) => (s.id === stepId ? updated : s));
       });
     }
 
