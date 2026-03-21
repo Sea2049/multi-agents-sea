@@ -1,6 +1,6 @@
 {
   "name": "agent-sea",
-  "version": "2.2.6",
+  "version": "2.2.7",
   "description": "Desktop command center for browsing and orchestrating expert agents with agent-sea.",
   "author": "BOB",
   "license": "MIT",
@@ -13,6 +13,7 @@
     "build:profiles": "node scripts/build-agent-runtime-profiles.mjs",
     "brand:assets": "node scripts/generate-brand-assets.mjs",
     "generate:agent-content": "node scripts/generate-agent-content.mjs",
+    "test:minimax-ui": "node scripts/run-minimax-ui-regression.mjs",
     "electron:dev": "npm run --prefix server build && concurrently -k -n RENDERER,ELECTRON -c green,blue \"vite\" \"wait-on http://127.0.0.1:5173 && electron .\"",
     "preelectron:build": "npm run brand:assets",
     "electron:build": "npm run build && electron-builder --win zip --publish never",
