@@ -1,6 +1,6 @@
 import type { ToolDefinition } from '../providers/types.js'
 
-export type SkillSource = 'workspace' | 'user' | 'remote' | 'bundled'
+export type SkillSource = 'workspace' | 'user' | 'imported' | 'remote' | 'bundled'
 export type SkillMode = 'prompt-only' | 'tool-contributor'
 
 export interface SkillRequires {

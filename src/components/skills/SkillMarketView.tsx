@@ -18,9 +18,11 @@ function TagBadge({ tag }: { tag: string }) {
 
 export function SkillMarketView() {
   const [indexEntries, setIndexEntries] = useState<RemoteSkillIndexEntry[]>([])
+  const [displayEntries, setDisplayEntries] = useState<RemoteSkillIndexEntry[]>([])
   const [installedSkills, setInstalledSkills] = useState<RemoteSkillRecord[]>([])
   const [updateChecks, setUpdateChecks] = useState<RemoteSkillUpdateCheck[]>([])
   const [loading, setLoading] = useState(true)
+  const [searching, setSearching] = useState(false)
   const [checkingUpdates, setCheckingUpdates] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
@@ -35,6 +37,7 @@ export function SkillMarketView() {
         apiClient.skills.listRemote(),
       ])
       setIndexEntries(index)
+      setDisplayEntries(index)
       setInstalledSkills(installed)
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载 Skill 市场失败')
@@ -72,16 +75,30 @@ export function SkillMarketView() {
     [updateChecks],
   )
 
-  const filteredEntries = useMemo(() => {
-    const q = searchQuery.toLowerCase().trim()
-    if (!q) return indexEntries
-    return indexEntries.filter(
-      (entry) =>
-        entry.name.toLowerCase().includes(q) ||
-        entry.description.toLowerCase().includes(q) ||
-        entry.author.toLowerCase().includes(q) ||
-        entry.tags.some((tag) => tag.toLowerCase().includes(q)),
-    )
+  useEffect(() => {
+    const query = searchQuery.trim()
+    if (!query) {
+      setDisplayEntries(indexEntries)
+      return
+    }
+    setSearching(true)
+    const timer = setTimeout(() => {
+      void apiClient.skills.searchIndex(query)
+        .then((entries) => {
+          setDisplayEntries(entries)
+        })
+        .catch((err) => {
+          setError(err instanceof Error ? err.message : '自然语言搜索失败')
+        })
+        .finally(() => {
+          setSearching(false)
+        })
+    }, 300)
+
+    return () => {
+      clearTimeout(timer)
+      setSearching(false)
+    }
   }, [indexEntries, searchQuery])
 
   const handleInstall = useCallback(async (entry: RemoteSkillIndexEntry) => {
@@ -193,11 +210,14 @@ export function SkillMarketView() {
           <Search size={15} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
           <input
             type="text"
-            placeholder="搜索 Skills（名称、描述、标签、作者）…"
+            placeholder="用自然语言描述你需要的能力…"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full rounded-[18px] border border-white/[0.08] bg-white/[0.03] py-3 pl-10 pr-4 text-sm text-slate-200 placeholder-slate-500 outline-none focus:border-violet-500/40 focus:bg-white/[0.05]"
           />
+          {searching && (
+            <p className="mt-2 text-xs text-slate-500">正在进行自然语言检索…</p>
+          )}
         </div>
       </section>
 
@@ -221,7 +241,7 @@ export function SkillMarketView() {
       )}
 
       {/* Empty State */}
-      {!loading && filteredEntries.length === 0 && (
+      {!loading && displayEntries.length === 0 && (
         <div className="panel-surface rounded-[28px] border border-white/[0.08] px-6 py-10 text-center text-slate-400">
           {searchQuery ? `没有匹配 "${searchQuery}" 的 Skills` : '没有可用的远程 Skills'}
         </div>
@@ -229,7 +249,7 @@ export function SkillMarketView() {
 
       {/* Skill Cards */}
       <AnimatePresence initial={false}>
-        {filteredEntries.map((entry) => {
+        {displayEntries.map((entry) => {
           const isInstalled = installedIds.has(entry.id)
           const hasUpdate = updateAvailableIds.has(entry.id)
           const isInstallingNow = busyId === entry.id

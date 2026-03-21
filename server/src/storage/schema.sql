@@ -78,6 +78,15 @@ CREATE TABLE IF NOT EXISTS skill_settings (
   updated_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS imported_skills (
+  id TEXT PRIMARY KEY,
+  skill_id TEXT NOT NULL,
+  original_filename TEXT,
+  sha256 TEXT NOT NULL,
+  imported_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS pipelines (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,

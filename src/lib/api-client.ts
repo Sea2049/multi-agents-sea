@@ -231,7 +231,7 @@ export interface SkillRecord {
   name: string;
   description: string;
   version?: string | null;
-  source: 'workspace' | 'user' | 'remote' | 'bundled';
+  source: 'workspace' | 'user' | 'imported' | 'remote' | 'bundled';
   mode: 'prompt-only' | 'tool-contributor';
   homepage?: string | null;
   enabled: boolean;
@@ -270,6 +270,29 @@ export interface RemoteSkillUpdateCheck {
   name: string;
   hasUpdate: boolean;
   remoteHash?: string;
+}
+
+export interface LocalSkillPreview {
+  skillId: string;
+  name: string;
+  description: string;
+  version?: string;
+  mode: 'prompt-only' | 'tool-contributor';
+  files: string[];
+  handlers: string[];
+  conflict: {
+    hasConflict: boolean;
+    existingSource?: SkillRecord['source'];
+    existingFilePath?: string;
+    willOverride: boolean;
+  };
+  warnings: string[];
+}
+
+export interface LocalSkillInstallResult {
+  skillId: string;
+  name: string;
+  importedAt: number;
 }
 
 async function getBaseUrl(): Promise<string> {
@@ -503,6 +526,13 @@ export const apiClient = {
   // ─── Skills ────────────────────────────────────────────────────────────────
 
   skills: {
+    buildFormData(files: File | File[]): FormData {
+      const formData = new FormData()
+      const normalizedFiles = Array.isArray(files) ? files : [files]
+      normalizedFiles.forEach((file) => formData.append('files', file))
+      return formData
+    },
+
     list(): Promise<{ version: number; skills: SkillRecord[] }> {
       return request<{ version: number; skills: SkillRecord[] }>('/api/skills')
     },
@@ -531,12 +561,42 @@ export const apiClient = {
       })
     },
 
-    getIndex(): Promise<RemoteSkillIndexEntry[]> {
-      return request<RemoteSkillIndexEntry[]>('/api/skills/index')
+    getIndex(query?: string): Promise<RemoteSkillIndexEntry[]> {
+      if (!query?.trim()) {
+        return request<RemoteSkillIndexEntry[]>('/api/skills/index')
+      }
+      return request<RemoteSkillIndexEntry[]>(`/api/skills/index?q=${encodeURIComponent(query.trim())}`)
+    },
+
+    searchIndex(query: string): Promise<RemoteSkillIndexEntry[]> {
+      return apiClient.skills.getIndex(query)
     },
 
     listRemote(): Promise<RemoteSkillRecord[]> {
       return request<RemoteSkillRecord[]>('/api/skills/remote')
+    },
+
+    previewLocal(files: File | File[]): Promise<LocalSkillPreview> {
+      return request<LocalSkillPreview>('/api/skills/local/preview', {
+        method: 'POST',
+        body: apiClient.skills.buildFormData(files),
+      })
+    },
+
+    importLocal(files: File | File[]): Promise<LocalSkillInstallResult> {
+      return request<LocalSkillInstallResult>('/api/skills/local/import', {
+        method: 'POST',
+        body: apiClient.skills.buildFormData(files),
+      })
+    },
+
+    async uninstallImported(id: string): Promise<void> {
+      const base = await getBaseUrl();
+      const res = await fetch(`${base}/api/skills/local/${encodeURIComponent(id)}`, { method: 'DELETE' })
+      if (!res.ok && res.status !== 204) {
+        const text = await res.text().catch(() => res.statusText)
+        throw new Error(`HTTP ${res.status}: ${text}`)
+      }
     },
 
     installRemote(url: string): Promise<RemoteSkillInstallResult> {

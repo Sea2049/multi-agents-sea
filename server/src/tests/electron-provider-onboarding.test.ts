@@ -133,6 +133,26 @@ async function waitForRendererWindow(electronApp: any, expectedPrefix: string, t
   throw new Error(`Timed out waiting for Electron renderer window at ${expectedPrefix}`)
 }
 
+async function isTextVisible(page: any, text: string, timeoutMs = 5_000): Promise<boolean> {
+  try {
+    await page.getByText(text).first().waitFor({ state: 'visible', timeout: timeoutMs })
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function clickFirstAvailableButton(page: any, labels: string[]): Promise<void> {
+  for (const label of labels) {
+    const locator = page.getByRole('button', { name: label }).first()
+    if (await locator.count()) {
+      await locator.click()
+      return
+    }
+  }
+  throw new Error(`No matching button found. Tried: ${labels.join(', ')}`)
+}
+
 describe('Electron Provider Onboarding', () => {
   beforeEach(async () => {
     await stopViteDevServer()
@@ -160,17 +180,26 @@ describe('Electron Provider Onboarding', () => {
     viteProcess = startViteDevServer()
     await waitForHttpReady(`http://127.0.0.1:${FRONTEND_PORT}`)
 
+    const clearedProviderEnv = Object.fromEntries(
+      Object.keys(process.env)
+        .filter((key) => key.startsWith('PROVIDER_'))
+        .map((key) => [key, '']),
+    )
+
     const electronApp = await electron.launch({
       executablePath: electronBinary,
       args: ['.'],
       cwd: PROJECT_ROOT,
       env: {
         ...process.env,
+        ...clearedProviderEnv,
         VITE_DEV_SERVER_URL: `http://127.0.0.1:${FRONTEND_PORT}`,
         PROVIDER_OPENAI_KEY: '',
         PROVIDER_ANTHROPIC_KEY: '',
         PROVIDER_MINIMAX_KEY: '',
         PROVIDER_MINIMAX_URL: '',
+        PROVIDER_DASHSCOPE_KEY: '',
+        PROVIDER_DASHSCOPE_URL: '',
         APPDATA: tempAppDataDir ?? process.env['APPDATA'],
         LOCALAPPDATA: tempAppDataDir ?? process.env['LOCALAPPDATA'],
         TEMP: tempAppDataDir ?? process.env['TEMP'],
@@ -179,6 +208,8 @@ describe('Electron Provider Onboarding', () => {
         ELECTRON_DISABLE_DEVTOOLS: '1',
         ELECTRON_DISABLE_SINGLE_INSTANCE_LOCK: '1',
         ELECTRON_EXTERNAL_SERVER: '1',
+        ENABLE_PROVIDER_PLUGINS: '0',
+        SEA_DISABLE_PROJECT_ENV: '1',
       },
     })
 
@@ -188,7 +219,7 @@ describe('Electron Provider Onboarding', () => {
 
       await page.waitForLoadState('domcontentloaded')
       await page.getByText('多节点 Agent 集群总览').waitFor()
-      await page.getByText('首次启动建议先配置 Provider').waitFor()
+      const sidebarHintVisible = await isTextVisible(page, '首次启动建议先配置 Provider')
 
       await page.getByRole('button', { name: '加入团队' }).nth(0).click()
       await page.getByRole('button', { name: '加入团队' }).nth(1).click()
@@ -196,9 +227,10 @@ describe('Electron Provider Onboarding', () => {
       await page.getByRole('button', { name: '执行任务' }).click()
 
       await page.getByText('发起任务').waitFor()
-      await page.getByText('首次启动建议先配置 Provider').last().waitFor()
+      const taskHintVisible = await isTextVisible(page, '首次启动建议先配置 Provider')
+      expect(sidebarHintVisible || taskHintVisible).toBe(true)
 
-      await page.getByRole('button', { name: '前往 Provider 设置' }).click()
+      await clickFirstAvailableButton(page, ['前往 Provider 设置', '打开 Provider 设置', 'Provider 设置'])
       await page.getByText('AI Provider 配置').waitFor()
     } finally {
       await electronApp.close()

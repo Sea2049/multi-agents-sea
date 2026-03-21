@@ -97,6 +97,17 @@ function ensureSkillSchema(database: BetterSqlite3Database): void {
   `)
 
   database.exec(`
+    CREATE TABLE IF NOT EXISTS imported_skills (
+      id TEXT PRIMARY KEY,
+      skill_id TEXT NOT NULL,
+      original_filename TEXT,
+      sha256 TEXT NOT NULL,
+      imported_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+  `)
+
+  database.exec(`
     CREATE TABLE IF NOT EXISTS remote_skills (
       id TEXT PRIMARY KEY,
       url TEXT NOT NULL,

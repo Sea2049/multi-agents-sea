@@ -1,5 +1,6 @@
 import Fastify, { type FastifyInstance } from 'fastify'
 import cors from '@fastify/cors'
+import multipart from '@fastify/multipart'
 import { healthRoutes } from './routes/health.js'
 import { chatRoutes } from './routes/chat.js'
 import { settingsRoutes } from './routes/settings.js'
@@ -37,6 +38,12 @@ export async function buildApp(): Promise<FastifyInstance> {
       callback(new Error(`Origin not allowed by CORS: ${origin}`), false)
     },
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  })
+
+  await app.register(multipart, {
+    limits: {
+      fileSize: 50 * 1024 * 1024,
+    },
   })
 
   await app.register(healthRoutes)

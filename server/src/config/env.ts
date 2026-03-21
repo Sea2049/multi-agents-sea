@@ -60,6 +60,10 @@ export function ensureProjectEnvLoaded(): void {
 
   loaded = true
 
+  if (process.env['SEA_DISABLE_PROJECT_ENV'] === '1') {
+    return
+  }
+
   for (const envPath of getEnvCandidates()) {
     if (!existsSync(envPath)) {
       continue
@@ -67,7 +71,9 @@ export function ensureProjectEnvLoaded(): void {
 
     const parsed = parseEnvFile(readFileSync(envPath, 'utf8'))
     for (const [key, value] of Object.entries(parsed)) {
-      if (!process.env[key]?.trim()) {
+      // Respect explicitly provided environment variables (including empty string).
+      // This prevents test/runtime overrides from being silently replaced by .env.
+      if (!(key in process.env)) {
         process.env[key] = value
       }
     }

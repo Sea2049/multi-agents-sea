@@ -11,11 +11,11 @@ const __dirname = dirname(__filename)
 
 const BUNDLED_SKILLS_DIR = join(__dirname, 'bundled')
 
-function getUserSkillsDir(): string {
+export function getUserSkillsDir(): string {
   return process.env['SEA_USER_SKILLS_DIR']?.trim() || join(homedir(), '.sea', 'skills')
 }
 
-function getWorkspaceSkillsDir(): string {
+export function getWorkspaceSkillsDir(): string {
   return process.env['SEA_WORKSPACE_SKILLS_DIR']?.trim() || join(process.cwd(), 'skills')
 }
 
@@ -136,7 +136,7 @@ function toToolDeclarations(value: unknown): SkillToolDeclaration[] | undefined 
   return tools.length > 0 ? tools : undefined
 }
 
-function toMetadata(value: unknown): SkillMetadata {
+export function toMetadata(value: unknown): SkillMetadata {
   if (!value || typeof value !== 'object') {
     return {}
   }
@@ -171,8 +171,7 @@ function toMetadata(value: unknown): SkillMetadata {
   }
 }
 
-async function loadSkillFile(filePath: string, source: SkillSource): Promise<SkillDefinition | null> {
-  const content = await readFile(filePath, 'utf8')
+export function parseSkillContent(content: string, source: SkillSource, filePath: string): SkillDefinition | null {
   const parsed = matter(content)
   const name = typeof parsed.data['name'] === 'string' ? parsed.data['name'].trim() : ''
   const description = typeof parsed.data['description'] === 'string' ? parsed.data['description'].trim() : ''
@@ -193,6 +192,11 @@ async function loadSkillFile(filePath: string, source: SkillSource): Promise<Ski
   }
 }
 
+export async function loadSkillFile(filePath: string, source: SkillSource): Promise<SkillDefinition | null> {
+  const content = await readFile(filePath, 'utf8')
+  return parseSkillContent(content, source, filePath)
+}
+
 async function loadSkillsForSource(rootDir: string, source: SkillSource): Promise<SkillDefinition[]> {
   const skillFiles = await collectSkillFiles(rootDir)
   const results: SkillDefinition[] = []
@@ -211,27 +215,39 @@ function sortSkillsByPrecedence(skills: SkillDefinition[]): SkillDefinition[] {
   const precedence: Record<SkillSource, number> = {
     workspace: 4,
     user: 3,
-    remote: 2,
-    bundled: 1,
+    imported: 2,
+    remote: 1,
+    bundled: 0,
   }
 
   return [...skills].sort((left, right) => precedence[right.source] - precedence[left.source])
 }
 
-function getRemoteSkillsDir(): string {
+export function getRemoteSkillsDir(): string {
   return process.env['SEA_REMOTE_SKILLS_DIR']?.trim() || join(homedir(), '.sea', 'skills', 'remote')
 }
 
+export function getImportedSkillsDir(): string {
+  return process.env['SEA_IMPORTED_SKILLS_DIR']?.trim() || join(homedir(), '.sea', 'skills', 'imported')
+}
+
 export async function loadAllSkills(): Promise<SkillDefinition[]> {
-  const [workspaceSkills, userSkills, remoteSkills, bundledSkills] = await Promise.all([
+  const [workspaceSkills, userSkills, importedSkills, remoteSkills, bundledSkills] = await Promise.all([
     loadSkillsForSource(getWorkspaceSkillsDir(), 'workspace'),
     loadSkillsForSource(getUserSkillsDir(), 'user'),
+    loadSkillsForSource(getImportedSkillsDir(), 'imported'),
     loadSkillsForSource(getRemoteSkillsDir(), 'remote'),
     loadSkillsForSource(BUNDLED_SKILLS_DIR, 'bundled'),
   ])
 
   const deduped = new Map<string, SkillDefinition>()
-  for (const skill of sortSkillsByPrecedence([...workspaceSkills, ...userSkills, ...remoteSkills, ...bundledSkills])) {
+  for (const skill of sortSkillsByPrecedence([
+    ...workspaceSkills,
+    ...userSkills,
+    ...importedSkills,
+    ...remoteSkills,
+    ...bundledSkills,
+  ])) {
     if (!deduped.has(skill.id)) {
       deduped.set(skill.id, skill)
     }
@@ -241,5 +257,11 @@ export async function loadAllSkills(): Promise<SkillDefinition[]> {
 }
 
 export function getSkillDiscoveryRoots(): string[] {
-  return [getWorkspaceSkillsDir(), getUserSkillsDir(), getRemoteSkillsDir(), BUNDLED_SKILLS_DIR]
+  return [
+    getWorkspaceSkillsDir(),
+    getUserSkillsDir(),
+    getImportedSkillsDir(),
+    getRemoteSkillsDir(),
+    BUNDLED_SKILLS_DIR,
+  ]
 }
