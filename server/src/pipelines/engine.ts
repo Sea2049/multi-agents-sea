@@ -49,6 +49,17 @@ interface PipelineGateWaiter {
   resolve: (approved: boolean) => void
 }
 
+function parseToolIterationLimit(raw: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(raw ?? '', 10)
+  if (!Number.isFinite(parsed)) return fallback
+  return Math.min(20, Math.max(1, parsed))
+}
+
+const PIPELINE_TOOL_MAX_ITERATIONS = parseToolIterationLimit(
+  process.env.PIPELINE_TOOL_MAX_ITERATIONS,
+  8,
+)
+
 const gateWaiters = new Map<string, PipelineGateWaiter>()
 
 function gateKey(taskId: string, stepId: string): string {
@@ -306,7 +317,9 @@ async function runLlmStep(params: {
   const scopedSnapshot = deriveScopedSnapshot(snapshot, pipelineStep.assignee, skillRouting)
   let systemPrompt: string
   try {
-    systemPrompt = loadAgentSystemPrompt(pipelineStep.assignee, scopedSnapshot)
+    systemPrompt = loadAgentSystemPrompt(pipelineStep.assignee, scopedSnapshot, {
+      referenceQuery: compiledStep.objective,
+    })
   } catch {
     systemPrompt = `You are ${pipelineStep.assignee}. Complete the given task thoroughly and clearly.`
   }
@@ -323,6 +336,7 @@ async function runLlmStep(params: {
       initialMessages: [{ role: 'user', content: message }],
       tools,
       snapshot: scopedSnapshot,
+      maxIterations: PIPELINE_TOOL_MAX_ITERATIONS,
       onToolCallStarted: (toolCall) => {
         onEvent({
           type: 'tool_call_started',

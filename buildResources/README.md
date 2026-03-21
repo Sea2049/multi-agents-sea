@@ -1,6 +1,6 @@
 # Build Resources
 
-> 与主文档同步：见 [README.md](../README.md)、[CHANGELOG.md](../CHANGELOG.md)、[docs/FRAMEWORK.md](../docs/FRAMEWORK.md)（V2.2.8 · 2026-03-21 周六）。
+> 与主文档同步：见 [README.md](../README.md)、[CHANGELOG.md](../CHANGELOG.md)、[docs/FRAMEWORK.md](../docs/FRAMEWORK.md)（V2.2.9 · 2026-03-21 周六）。
 
 这个目录存放桌面分发所需的品牌化资源：
 

@@ -30,6 +30,11 @@ export interface MemorySearchMatch {
   score: number
 }
 
+export interface MemorySearchScope {
+  agentId?: string
+  taskId?: string
+}
+
 type MemoryInput = Omit<
   Memory,
   'id' | 'createdAt' | 'embeddingStatus' | 'embeddingModel' | 'embeddedAt' | 'embeddingError' | 'isPinned' | 'pinnedAt' | 'pinSource' | 'pinReason'
@@ -418,18 +423,35 @@ export function searchMemories(query: string, limit = 5): Memory[] {
   }
 }
 
-export function searchMemoriesFts(query: string, limit = 5): MemorySearchMatch[] {
+export function searchMemoriesFts(
+  query: string,
+  limit = 5,
+  scope?: MemorySearchScope,
+): MemorySearchMatch[] {
   const db = getDb()
+  const conditions: string[] = ['memories_fts MATCH ?']
+  const params: unknown[] = [query]
+
+  if (scope?.agentId) {
+    conditions.push('m.agent_id = ?')
+    params.push(scope.agentId)
+  }
+  if (scope?.taskId) {
+    conditions.push('m.task_id = ?')
+    params.push(scope.taskId)
+  }
+
+  const where = `WHERE ${conditions.join(' AND ')}`
   const rows = db
     .prepare(`
       SELECT m.*, bm25(memories_fts) AS lexical_score
       FROM memories m
       JOIN memories_fts ON m.rowid = memories_fts.rowid
-      WHERE memories_fts MATCH ?
+      ${where}
       ORDER BY lexical_score ASC, m.created_at DESC
       LIMIT ?
     `)
-    .all(query, limit) as Array<MemoryRow & { lexical_score: number }>
+    .all(...params, limit) as Array<MemoryRow & { lexical_score: number }>
 
   return rows.map((row, index) => ({
     memory: rowToMemory(row),
@@ -439,28 +461,46 @@ export function searchMemoriesFts(query: string, limit = 5): MemorySearchMatch[]
   }))
 }
 
-export function searchMemoriesSemantic(queryVector: EmbeddingVector, limit = 5): MemorySearchMatch[] {
+export function searchMemoriesSemantic(
+  queryVector: EmbeddingVector,
+  limit = 5,
+  scope?: MemorySearchScope,
+): MemorySearchMatch[] {
   const capabilities = getDbCapabilities()
   if (!capabilities.sqliteVec.available) {
     return []
   }
 
   const db = getDb()
+  const conditions: string[] = [
+    'me.dimensions = ?',
+    `m.embedding_status = 'indexed'`,
+  ]
+  const params: unknown[] = [
+    JSON.stringify(queryVector.values),
+    queryVector.dimensions,
+  ]
+
+  if (scope?.agentId) {
+    conditions.push('m.agent_id = ?')
+    params.push(scope.agentId)
+  }
+  if (scope?.taskId) {
+    conditions.push('m.task_id = ?')
+    params.push(scope.taskId)
+  }
+
+  const where = `WHERE ${conditions.join('\n        AND ')}`
   const rows = db
     .prepare(`
       SELECT m.*, vec_distance_cosine(me.embedding, vec_f32(?)) AS semantic_distance
       FROM memory_embeddings me
       JOIN memories m ON m.id = me.memory_id
-      WHERE me.dimensions = ?
-        AND m.embedding_status = 'indexed'
+      ${where}
       ORDER BY semantic_distance ASC, m.created_at DESC
       LIMIT ?
     `)
-    .all(
-      JSON.stringify(queryVector.values),
-      queryVector.dimensions,
-      limit,
-    ) as Array<MemoryRow & { semantic_distance: number }>
+    .all(...params, limit) as Array<MemoryRow & { semantic_distance: number }>
 
   return rows.map((row, index) => ({
     memory: rowToMemory(row),
@@ -496,11 +536,48 @@ export function getMemoryById(id: string): Memory | undefined {
   return row ? rowToMemory(row) : undefined
 }
 
-export function getPinnedMemories(limit = 20): Memory[] {
+export function getPinnedMemories(
+  limit = 20,
+  options?: {
+    agentId?: string
+    taskId?: string
+    includeManualGlobal?: boolean
+  },
+): Memory[] {
   const db = getDb()
+  const includeManualGlobal = options?.includeManualGlobal ?? false
+  const conditions: string[] = ['is_pinned = 1']
+  const params: unknown[] = []
+
+  if (includeManualGlobal) {
+    const scopeConditions: string[] = ['pin_source = ?']
+    params.push('manual')
+
+    if (options?.taskId) {
+      scopeConditions.push('task_id = ?')
+      params.push(options.taskId)
+    }
+    if (options?.agentId) {
+      scopeConditions.push('agent_id = ?')
+      params.push(options.agentId)
+    }
+
+    conditions.push(`(${scopeConditions.join(' OR ')})`)
+  } else {
+    if (options?.taskId) {
+      conditions.push('task_id = ?')
+      params.push(options.taskId)
+    }
+    if (options?.agentId) {
+      conditions.push('agent_id = ?')
+      params.push(options.agentId)
+    }
+  }
+
+  const where = `WHERE ${conditions.join(' AND ')}`
   const rows = db
-    .prepare('SELECT * FROM memories WHERE is_pinned = 1 ORDER BY pinned_at DESC LIMIT ?')
-    .all(limit) as MemoryRow[]
+    .prepare(`SELECT * FROM memories ${where} ORDER BY pinned_at DESC, created_at DESC LIMIT ?`)
+    .all(...params, limit) as MemoryRow[]
   return rows.map(rowToMemory)
 }
 

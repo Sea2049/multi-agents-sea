@@ -7,10 +7,11 @@ import { getToolRegistry } from './registry.js'
 import { WEB_SEARCH_DEFINITION, executeWebSearch } from './web-search.js'
 import { FILE_READ_DEFINITION, executeFileRead } from './file-read.js'
 import { CODE_EXEC_DEFINITION, executeCodeExec } from './code-exec.js'
+import { FILE_WRITE_DEFINITION, executeFileWrite } from './file-write.js'
 import { runInSandbox } from './sandbox-worker.js'
 
 export type { ToolDefinition, ToolCallRequest, ToolCallResult }
-export { WEB_SEARCH_DEFINITION, FILE_READ_DEFINITION, CODE_EXEC_DEFINITION }
+export { WEB_SEARCH_DEFINITION, FILE_READ_DEFINITION, CODE_EXEC_DEFINITION, FILE_WRITE_DEFINITION }
 
 interface SkillToolModule {
   execute?: (
@@ -35,6 +36,12 @@ function ensureBuiltinToolsRegistered(): void {
   registry.registerBuiltin(WEB_SEARCH_DEFINITION, (input) => executeWebSearch(input as { query: string }))
   registry.registerBuiltin(FILE_READ_DEFINITION, (input) => executeFileRead(input as { path: string; maxChars?: string }))
   registry.registerBuiltin(CODE_EXEC_DEFINITION, (input) => executeCodeExec(input as { language: string; code: string }))
+  if (process.env.FILE_WRITE_TOOL_ENABLED === 'true') {
+    registry.registerBuiltin(
+      FILE_WRITE_DEFINITION,
+      (input) => executeFileWrite(input as { path: string; content: string; overwrite?: string }),
+    )
+  }
   builtinsRegistered = true
 }
 

@@ -167,4 +167,68 @@ describe('memory retriever', () => {
     expect(result.memories).toHaveLength(0)
     expect(result.injectedContext).toBe('')
   })
+
+  it('prioritizes task-scoped retrieval when preferTaskScoped is enabled', async () => {
+    setEmbeddingProviderFactoryForTests(async () => null)
+
+    saveMemory({
+      content: 'Task A deployment requires blue-green rollout.',
+      source: 'task_report',
+      category: 'task_report',
+      taskId: 'task-a',
+      agentId: 'agent-a',
+    })
+    saveMemory({
+      content: 'Task B deployment requires canary rollout.',
+      source: 'task_report',
+      category: 'task_report',
+      taskId: 'task-b',
+      agentId: 'agent-b',
+    })
+
+    const result = await retrieveRelevantMemories({
+      query: 'deployment rollout',
+      taskId: 'task-a',
+      agentId: 'agent-a',
+      preferTaskScoped: true,
+      limit: 2,
+    })
+
+    expect(result.memories).toHaveLength(1)
+    expect(result.memories[0]?.taskId).toBe('task-a')
+    expect(result.injectedContext).toContain('Task A deployment')
+    expect(result.injectedContext).not.toContain('Task B deployment')
+  })
+
+  it('keeps manual pinned memory globally visible while filtering auto pinned by scope', async () => {
+    setEmbeddingProviderFactoryForTests(async () => null)
+
+    saveMemory({
+      content: 'Global security policy: never expose secrets in logs.',
+      source: 'manual',
+      category: 'policy',
+      isPinned: true,
+      pinSource: 'manual',
+    })
+    saveMemory({
+      content: 'Task A pinned note should not leak into task B.',
+      source: 'task_report',
+      category: 'task_report',
+      taskId: 'task-a',
+      agentId: 'agent-a',
+      isPinned: true,
+      pinSource: 'auto',
+    })
+
+    const result = await retrieveRelevantMemories({
+      query: 'security policy',
+      taskId: 'task-b',
+      agentId: 'agent-b',
+      preferTaskScoped: true,
+      includePinned: true,
+    })
+
+    expect(result.injectedContext).toContain('Global security policy')
+    expect(result.injectedContext).not.toContain('Task A pinned note')
+  })
 })

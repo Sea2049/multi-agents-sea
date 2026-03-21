@@ -32,6 +32,7 @@ import {
 import {
   appendTaskMessage,
   buildContinuationContext,
+  buildTaskQuestionWithMemoryContext,
   buildTaskChatMessages,
   buildTaskChatSystemPrompt,
   listTaskMessages,
@@ -87,6 +88,32 @@ interface TaskStepRow {
 
 interface TaskMessageBody {
   message: string
+}
+
+function buildFailureMemoryReport(params: {
+  objective: string
+  finalReport: string
+  stepFailures: Array<{ stepId: string; agentId: string; error: string }>
+}): string {
+  const header = [
+    '# Failed Task Summary',
+    '',
+    `Objective: ${params.objective}`,
+    `Failure count: ${params.stepFailures.length}`,
+    '',
+  ]
+  const failureLines = params.stepFailures.slice(0, 5).map((failure, index) =>
+    `${index + 1}. [${failure.stepId}] (${failure.agentId}) ${failure.error}`,
+  )
+
+  const reportSnippet = params.finalReport.trim().slice(0, 1600)
+
+  return [
+    ...header,
+    ...(failureLines.length > 0 ? ['Key failures:', ...failureLines, ''] : []),
+    'Execution report excerpt:',
+    reportSnippet || '(empty)',
+  ].join('\n')
 }
 
 function parseTaskTeamMembers(raw: string): TaskTeamMemberInput[] {
@@ -251,14 +278,29 @@ async function runOrchestration(params: {
     const hasFailedStep = [...stepResults.values()].some((r) => r.error)
     const finalStatus: TaskStatus = hasFailedStep ? 'failed' : 'completed'
 
-    if (finalStatus === 'completed' && finalReport) {
+    if (finalReport) {
       try {
+        const stepFailures = [...stepResults.values()]
+          .filter((result): result is typeof result & { error: string } => typeof result.error === 'string' && result.error.length > 0)
+          .map((result) => ({
+            stepId: result.stepId,
+            agentId: result.agentId,
+            error: result.error,
+          }))
+        const reportForMemory = finalStatus === 'completed'
+          ? finalReport
+          : buildFailureMemoryReport({
+            objective,
+            finalReport,
+            stepFailures,
+          })
+
         await persistTaskLongTermMemories({
           taskId,
           taskObjective: objective,
           plan,
           stepResults,
-          report: finalReport,
+          report: reportForMemory,
           provider: aggregatorProvider,
           model: firstMember.model,
         })
@@ -505,11 +547,16 @@ export async function tasksRoutes(app: FastifyInstance): Promise<void> {
         },
         steps: steps.map(toTaskStepSnapshot),
       })
+      const userMessage = await buildTaskQuestionWithMemoryContext({
+        taskId: task.id,
+        agentId: firstMember.agentId,
+        question: trimmedMessage,
+      })
 
       for await (const chunk of provider.chat({
         model: firstMember.model,
         systemPrompt,
-        messages: buildTaskChatMessages(previousMessages, trimmedMessage),
+        messages: buildTaskChatMessages(previousMessages, userMessage),
         temperature: 0.2,
       })) {
         if (chunk.delta) {
@@ -579,7 +626,7 @@ export async function tasksRoutes(app: FastifyInstance): Promise<void> {
       content: instruction,
     })
 
-    const continuationContext = buildContinuationContext({
+    const continuationContext = await buildContinuationContext({
       task: {
         id: task.id,
         objective: task.objective,
@@ -590,6 +637,7 @@ export async function tasksRoutes(app: FastifyInstance): Promise<void> {
       steps: steps.map(toTaskStepSnapshot),
       threadMessages,
       instruction,
+      agentId: teamMembers[0]?.agentId,
     })
 
     const now = Date.now()

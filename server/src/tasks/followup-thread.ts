@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type BetterSqlite3 from 'better-sqlite3'
 import type { Message, MessageRole } from '../providers/types.js'
+import { retrieveRelevantMemories } from '../memory/retriever.js'
 
 export type TaskMessageMode = 'chat' | 'continue'
 
@@ -123,6 +124,34 @@ export function buildTaskChatMessages(
   return contextMessages
 }
 
+export async function buildTaskQuestionWithMemoryContext(params: {
+  taskId: string
+  agentId?: string
+  question: string
+}): Promise<string> {
+  const question = params.question.trim()
+  if (!question) {
+    return ''
+  }
+
+  const retrieval = await retrieveRelevantMemories({
+    query: question,
+    taskId: params.taskId,
+    agentId: params.agentId,
+    limit: 4,
+    maxChars: 1200,
+    preferTaskScoped: true,
+    includePinned: true,
+    includeGraphContext: false,
+  })
+
+  if (!retrieval.injectedContext) {
+    return question
+  }
+
+  return `${retrieval.injectedContext}\n\n## Current User Request\n${question}`
+}
+
 export function buildTaskChatSystemPrompt(params: {
   task: TaskContextSnapshot
   steps: TaskStepSnapshot[]
@@ -151,12 +180,14 @@ export function buildTaskChatSystemPrompt(params: {
     .join('\n\n')
 }
 
-export function buildContinuationContext(params: {
+export async function buildContinuationContext(params: {
   task: TaskContextSnapshot
   steps: TaskStepSnapshot[]
   threadMessages: TaskThreadMessage[]
   instruction: string
-}): string {
+  agentId?: string
+}): Promise<string> {
+  const instruction = params.instruction.trim()
   const recentMessages = params.threadMessages
     .slice(-10)
     .map((message) => `${message.role.toUpperCase()}(${message.mode}): ${clampText(message.content, 500)}`)
@@ -170,6 +201,17 @@ export function buildContinuationContext(params: {
     })
     .join('\n\n')
 
+  const retrieval = await retrieveRelevantMemories({
+    query: instruction,
+    taskId: params.task.id,
+    agentId: params.agentId,
+    limit: 4,
+    maxChars: 1200,
+    preferTaskScoped: true,
+    includePinned: true,
+    includeGraphContext: false,
+  })
+
   return [
     `Continuation requested for task ${params.task.id}.`,
     `Original objective: ${params.task.objective}`,
@@ -178,7 +220,8 @@ export function buildContinuationContext(params: {
     params.task.error ? `Latest task error:\n${clampText(params.task.error, 800)}` : '',
     latestStepDigest ? `Historical steps summary:\n${latestStepDigest}` : '',
     recentMessages ? `Recent follow-up thread:\n${recentMessages}` : '',
-    `New instruction:\n${params.instruction.trim()}`,
+    retrieval.injectedContext ? `Relevant memory context:\n${retrieval.injectedContext}` : '',
+    `New instruction:\n${instruction}`,
   ]
     .filter(Boolean)
     .join('\n\n')

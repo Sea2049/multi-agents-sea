@@ -3,7 +3,11 @@ import { runWithTools } from '../runtime/tool-executor.js'
 import { executeTool, getToolDefinitions } from '../tools/index.js'
 import { resetCodeExecDependencies, setCodeExecDependencies } from '../tools/code-exec.js'
 import { executeFileRead, setWorkspaceRoot } from '../tools/file-read.js'
+import { executeFileWrite, setFileWriteWorkspaceRoot } from '../tools/file-write.js'
 import type { ProviderMessage, ToolCallRequest } from '../providers/types.js'
+import { mkdtemp, readFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 
 // Mock web-search to avoid real network calls in unit tests
 vi.mock('../tools/web-search.js', async (importOriginal) => {
@@ -57,6 +61,7 @@ const testMessages: ProviderMessage[] = [
 beforeEach(() => {
   vi.clearAllMocks()
   resetCodeExecDependencies()
+  delete process.env.FILE_WRITE_TOOL_ENABLED
 })
 
 describe('Tool Registry', () => {
@@ -195,6 +200,56 @@ describe('code_exec tool', () => {
   })
 })
 
+describe('file_write tool', () => {
+  it('should reject writes when the tool is disabled', async () => {
+    setFileWriteWorkspaceRoot('e:\\trae\\multi-agents-sea')
+    const result = await executeFileWrite({
+      path: 'tmp/test-write-disabled.txt',
+      content: 'hello',
+    })
+    expect(result).toContain('file_write is disabled')
+  })
+
+  it('should enforce workspace boundaries', async () => {
+    process.env.FILE_WRITE_TOOL_ENABLED = 'true'
+    setFileWriteWorkspaceRoot('e:\\trae\\multi-agents-sea')
+    const result = await executeFileWrite({
+      path: '..\\outside\\pwned.txt',
+      content: 'hello',
+    })
+    expect(result).toContain('outside workspace')
+  })
+
+  it('should write file when enabled and respect overwrite guard', async () => {
+    process.env.FILE_WRITE_TOOL_ENABLED = 'true'
+    const root = await mkdtemp(join(tmpdir(), 'file-write-test-'))
+    setFileWriteWorkspaceRoot(root)
+
+    const first = await executeFileWrite({
+      path: 'logs/output.txt',
+      content: 'first-line',
+    })
+    expect(first).toContain('file_write success')
+    const written = await readFile(join(root, 'logs', 'output.txt'), 'utf8')
+    expect(written).toBe('first-line')
+
+    const blocked = await executeFileWrite({
+      path: 'logs/output.txt',
+      content: 'second-line',
+    })
+    expect(blocked).toContain('already exists')
+
+    const overwritten = await executeFileWrite({
+      path: 'logs/output.txt',
+      content: 'second-line',
+      overwrite: 'true',
+    })
+    expect(overwritten).toContain('overwritten=true')
+    const rewritten = await readFile(join(root, 'logs', 'output.txt'), 'utf8')
+    expect(rewritten).toBe('second-line')
+  })
+})
+
 describe('runWithTools - provider that does not support tools', () => {
   it('should fall back to regular chat when supportsTools is false', async () => {
     const provider = createLegacyProvider('Hello from legacy')
@@ -205,7 +260,8 @@ describe('runWithTools - provider that does not support tools', () => {
       initialMessages: testMessages,
       tools: getToolDefinitions(),
     })
-    expect(result.finalText).toBe('Hello from legacy')
+    expect(result.finalText).toContain('Tool Fallback Notice')
+    expect(result.finalText).toContain('Hello from legacy')
     expect(result.toolCallCount).toBe(0)
     expect(provider.chat).toHaveBeenCalledOnce()
   })

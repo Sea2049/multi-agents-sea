@@ -106,8 +106,8 @@ describe('Scenario 1: Successful two-step execution', () => {
     expect(eventTypes).toContain('step_completed')
     expect(eventTypes[eventTypes.length - 1]).toBe('task_completed')
 
-    expect(results.get('step-1')?.output).toBe('Mock output')
-    expect(results.get('step-2')?.output).toBe('Mock output')
+    expect(results.get('step-1')?.output).toContain('Mock output')
+    expect(results.get('step-2')?.output).toContain('Mock output')
 
     // step-2 must start after step-1 completes (sequential)
     const s1CompletedIdx = events.findIndex(
@@ -300,7 +300,7 @@ describe('Scenario 3: Step execution timeout', () => {
       timeoutMs: 50,
     })
 
-    expect(results.get('step-1')?.output).toBe('fast output')
+    expect(results.get('step-1')?.output).toContain('fast output')
     expect(results.get('step-2')?.error).toContain('timed out')
 
     const skippedEvent = events.find(

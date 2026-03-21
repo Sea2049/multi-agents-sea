@@ -152,7 +152,15 @@ export async function runWithTools(options: ToolExecutorOptions): Promise<ToolEx
     })) {
       if (chunk.delta) text += chunk.delta
     }
-    return { finalText: text, toolCallCount: 0, messages: initialMessages }
+    const fallbackNotice = [
+      '[Tool Fallback Notice]',
+      `Provider "${provider.name}" does not support tool calling in this runtime.`,
+      'This response was generated in plain-chat mode without executing tools.',
+    ].join(' ')
+    const finalText = text.trim()
+      ? `${fallbackNotice}\n\n${text}`
+      : fallbackNotice
+    return { finalText, toolCallCount: 0, messages: initialMessages }
   }
 
   const conversationMessages: ProviderMessage[] = [...initialMessages]

@@ -25,6 +25,17 @@ export interface SchedulerParams {
   maxConcurrent?: number
 }
 
+function parseToolIterationLimit(raw: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(raw ?? '', 10)
+  if (!Number.isFinite(parsed)) return fallback
+  return Math.min(20, Math.max(1, parsed))
+}
+
+const ORCHESTRATOR_TOOL_MAX_ITERATIONS = parseToolIterationLimit(
+  process.env.ORCHESTRATOR_TOOL_MAX_ITERATIONS,
+  8,
+)
+
 async function executeStep(
   step: TaskStep,
   teamMember: SchedulerTeamMember,
@@ -42,7 +53,7 @@ async function executeStep(
 
   let systemPrompt: string
   try {
-    systemPrompt = loadAgentSystemPrompt(step.assignee, scopedSnapshot)
+    systemPrompt = loadAgentSystemPrompt(step.assignee, scopedSnapshot, { referenceQuery: step.objective })
   } catch {
     systemPrompt = `You are ${step.assignee}. Complete the given task thoroughly and clearly.`
   }
@@ -62,6 +73,7 @@ async function executeStep(
       initialMessages: [{ role: 'user', content: message }],
       tools,
       snapshot: scopedSnapshot,
+      maxIterations: ORCHESTRATOR_TOOL_MAX_ITERATIONS,
       onToolCallStarted: (toolCall) => {
         onEvent({
           type: 'tool_call_started',

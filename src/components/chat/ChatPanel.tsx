@@ -49,8 +49,18 @@ function sortConfiguredProviders(providers: ProviderConfig[]): ProviderConfig[] 
 
 function loadSessionMap(): Record<string, string> {
   try {
-    const raw = sessionStorage.getItem(SESSION_STORE_KEY);
-    return raw ? (JSON.parse(raw) as Record<string, string>) : {};
+    const localRaw = localStorage.getItem(SESSION_STORE_KEY);
+    if (localRaw) {
+      return JSON.parse(localRaw) as Record<string, string>;
+    }
+    const sessionRaw = sessionStorage.getItem(SESSION_STORE_KEY);
+    if (!sessionRaw) {
+      return {};
+    }
+    const parsed = JSON.parse(sessionRaw) as Record<string, string>;
+    localStorage.setItem(SESSION_STORE_KEY, JSON.stringify(parsed));
+    sessionStorage.removeItem(SESSION_STORE_KEY);
+    return parsed;
   } catch {
     return {};
   }
@@ -58,7 +68,8 @@ function loadSessionMap(): Record<string, string> {
 
 function saveSessionMap(map: Record<string, string>) {
   try {
-    sessionStorage.setItem(SESSION_STORE_KEY, JSON.stringify(map));
+    localStorage.setItem(SESSION_STORE_KEY, JSON.stringify(map));
+    sessionStorage.removeItem(SESSION_STORE_KEY);
   } catch {
     // ignore
   }

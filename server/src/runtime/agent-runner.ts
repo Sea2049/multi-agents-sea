@@ -98,7 +98,7 @@ export async function* runAgentStream(
   const { agentId, sessionId, message, provider, model, snapshot, skillRouting } = params
   const scopedSnapshot = deriveScopedSnapshot(snapshot, agentId, skillRouting)
 
-  const systemPrompt = loadAgentSystemPrompt(agentId, scopedSnapshot)
+  const systemPrompt = loadAgentSystemPrompt(agentId, scopedSnapshot, { referenceQuery: message })
   const history = loadRecentMessages(sessionId)
   const userMessage = await buildUserMessageWithMemoryContext(message)
 

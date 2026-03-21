@@ -27,7 +27,11 @@ Output ONLY valid JSON matching this schema (no markdown, no explanation):
 
 Rules:
 - Use only agentIds from the provided team
-- 2-4 steps maximum for MVP
+- Choose step count based on complexity:
+  - simple objectives: 2-3 steps
+  - medium objectives: 4-5 steps
+  - complex objectives: 6-8 steps
+- Never exceed 8 steps
 - Steps that can run in parallel should have no dependsOn
 - Steps that need previous output must list dependency ids in dependsOn
 - Keep objectives focused and specific`

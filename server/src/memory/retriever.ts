@@ -10,6 +10,11 @@ export interface RetrievalOptions {
   query: string
   limit?: number
   maxChars?: number
+  taskId?: string
+  agentId?: string
+  includePinned?: boolean
+  preferTaskScoped?: boolean
+  includeGraphContext?: boolean
 }
 
 export interface RetrievalResult {
@@ -70,6 +75,22 @@ function mergeMatches(lists: MemorySearchMatch[][], limit: number): Memory[] {
     })
     .slice(0, limit)
     .map((entry) => entry.memory)
+}
+
+function dedupeById(memories: Memory[]): Memory[] {
+  const seen = new Set<string>()
+  const deduped: Memory[] = []
+  for (const memory of memories) {
+    if (seen.has(memory.id)) continue
+    seen.add(memory.id)
+    deduped.push(memory)
+  }
+  return deduped
+}
+
+function combineScopedResults(scopedLists: Memory[][], limit: number): Memory[] {
+  const flattened = scopedLists.flat()
+  return dedupeById(flattened).slice(0, limit)
 }
 
 async function retrieveGraphContext(query: string): Promise<string> {
@@ -149,9 +170,25 @@ function buildInjectedContext(
 }
 
 export async function retrieveRelevantMemories(options: RetrievalOptions): Promise<RetrievalResult> {
-  const { query, limit = 5, maxChars = 2000 } = options
+  const {
+    query,
+    limit = 5,
+    maxChars = 2000,
+    taskId,
+    agentId,
+    includePinned = true,
+    preferTaskScoped = false,
+    includeGraphContext = true,
+  } = options
 
-  const pinnedMemories = getPinnedMemories()
+  const hasScope = Boolean(taskId || agentId)
+  const pinnedMemories = includePinned
+    ? getPinnedMemories(20, {
+      taskId,
+      agentId,
+      includeManualGlobal: hasScope,
+    })
+    : []
 
   if (!query.trim()) {
     if (pinnedMemories.length === 0) {
@@ -165,48 +202,67 @@ export async function retrieveRelevantMemories(options: RetrievalOptions): Promi
 
   const lexicalLimit = Math.max(limit * 2, limit)
   const safeQuery = normalizeFtsQuery(query)
+  const scopedFilters: Array<{ taskId?: string; agentId?: string }> = preferTaskScoped && hasScope
+    ? [
+      ...(taskId ? [{ taskId }] : []),
+      ...(agentId ? [{ agentId }] : []),
+    ]
+    : [{ taskId, agentId }]
 
-  let ftsMatches: MemorySearchMatch[] = []
+  const lexicalLists: MemorySearchMatch[][] = []
   if (safeQuery) {
-    try {
-      ftsMatches = searchMemoriesFts(safeQuery, lexicalLimit)
-    } catch {
-      ftsMatches = []
-    }
+    const looseQuery = buildLooseFtsQuery(safeQuery)
+    for (const scope of scopedFilters) {
+      let scopedFts: MemorySearchMatch[] = []
+      try {
+        scopedFts = searchMemoriesFts(safeQuery, lexicalLimit, scope)
+      } catch {
+        scopedFts = []
+      }
 
-    if (ftsMatches.length === 0) {
-      const looseQuery = buildLooseFtsQuery(safeQuery)
-      if (looseQuery !== safeQuery) {
+      if (scopedFts.length === 0 && looseQuery !== safeQuery) {
         try {
-          ftsMatches = searchMemoriesFts(looseQuery, lexicalLimit)
+          scopedFts = searchMemoriesFts(looseQuery, lexicalLimit, scope)
         } catch {
-          ftsMatches = []
+          scopedFts = []
         }
       }
+
+      lexicalLists.push(scopedFts)
     }
   }
 
-  let semanticMatches: MemorySearchMatch[] = []
+  const semanticLists: MemorySearchMatch[][] = []
   if (hasIndexedMemoryEmbeddings()) {
     try {
       const queryVector = await embedQueryText(query)
       if (queryVector) {
-        semanticMatches = searchMemoriesSemantic(queryVector, lexicalLimit)
+        for (const scope of scopedFilters) {
+          semanticLists.push(searchMemoriesSemantic(queryVector, lexicalLimit, scope))
+        }
       }
     } catch {
-      semanticMatches = []
+      // ignore semantic errors and continue with lexical retrieval
     }
   }
 
+  const mergedPerScope: Memory[][] = scopedFilters.map((_scope, index) => {
+    const lexical = lexicalLists[index] ?? []
+    const semantic = semanticLists[index] ?? []
+    return mergeMatches([lexical, semantic], limit)
+  })
+
   let graphContext = ''
-  try {
-    graphContext = await retrieveGraphContext(query)
-  } catch {
-    graphContext = ''
+  if (includeGraphContext) {
+    try {
+      graphContext = await retrieveGraphContext(query)
+    } catch {
+      graphContext = ''
+    }
   }
 
   const pinnedIds = new Set(pinnedMemories.map(m => m.id))
-  const allDynamic = mergeMatches([ftsMatches, semanticMatches], limit)
+  const allDynamic = combineScopedResults(mergedPerScope, limit)
   const dynamicMemories = allDynamic.filter(m => !pinnedIds.has(m.id))
 
   if (dynamicMemories.length === 0 && pinnedMemories.length === 0 && !graphContext) {
