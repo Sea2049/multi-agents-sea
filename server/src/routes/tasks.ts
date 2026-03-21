@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { FastifyInstance } from 'fastify'
 import { getDb } from '../storage/db.js'
-import { getProviderFromEnv, isProviderName, type ProviderName } from '../providers/index.js'
+import { getProviderFromEnv, getRuntimeProviderFromEnv, isProviderName, type ProviderName } from '../providers/index.js'
 import { createRegistrySnapshot } from '../runtime/registry-snapshot-builder.js'
 import type { RegistrySnapshot } from '../runtime/registry-snapshot.js'
 import { parseRegistrySnapshot, serializeRegistrySnapshot } from '../runtime/registry-snapshot.js'
@@ -105,7 +105,7 @@ async function runOrchestration(params: {
     const firstMember = teamMembersInput[0]
     if (!firstMember) throw new Error('teamMembers is empty')
 
-    const plannerProvider = getProviderFromEnv(firstMember.provider as ProviderName)
+    const plannerProvider = getRuntimeProviderFromEnv(firstMember.provider as ProviderName)
     const availableAgentIds = new Set(teamMembersInput.map((m) => m.agentId))
 
     updateTaskStatus(taskId, 'planning')
@@ -165,7 +165,7 @@ async function runOrchestration(params: {
         provider: m.provider,
         model: m.model,
       })),
-      providerFactory: (providerName) => getProviderFromEnv(providerName as ProviderName),
+      providerFactory: (providerName) => getRuntimeProviderFromEnv(providerName as ProviderName),
       snapshot,
       onEvent: (event) => {
         if (event.type !== 'task_completed' && event.type !== 'task_failed') {
@@ -180,7 +180,7 @@ async function runOrchestration(params: {
     }
 
     // 汇总结果
-    const aggregatorProvider = getProviderFromEnv(firstMember.provider as ProviderName)
+    const aggregatorProvider = getRuntimeProviderFromEnv(firstMember.provider as ProviderName)
     const finalReport = await aggregateResults({
       taskId,
       objective,

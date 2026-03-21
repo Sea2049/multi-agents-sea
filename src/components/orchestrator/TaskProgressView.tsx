@@ -447,6 +447,7 @@ function TaskProgressView({ taskId, onClose, onOpenTask }: TaskProgressViewProps
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -8 }}
                     transition={{ duration: 0.18 }}
+                    className="max-h-[500px] overflow-y-auto"
                   >
                     <AgentActivityLog
                       taskId={taskId}

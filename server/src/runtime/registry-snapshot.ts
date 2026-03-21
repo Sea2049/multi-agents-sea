@@ -5,7 +5,7 @@ export interface SnapshotSkill {
   id: string
   name: string
   description: string
-  source: 'workspace' | 'user' | 'bundled'
+  source: 'workspace' | 'user' | 'bundled' | 'remote'
   mode: 'prompt-only' | 'tool-contributor'
   promptBlock: string
 }

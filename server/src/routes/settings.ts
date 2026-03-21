@@ -7,6 +7,7 @@ interface ProviderSettingRow {
   provider: string
   model: string
   endpoint: string | null
+  priority: number | null
   created_at: number
   updated_at: number
 }
@@ -24,9 +25,20 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
       .all()
 
     const settingsMap = new Map(rows.map((r) => [r.provider, r]))
+    const configuredRows = rows
+      .filter((row) => registry.isConfigured(row.provider))
+      .map((row) => ({
+        provider: row.provider,
+        priority: Number(row.priority ?? 0),
+      }))
+    const preferredProviderName = configuredRows.length > 0
+      ? configuredRows.sort((left, right) => right.priority - left.priority)[0]!.provider
+      : null
     const providers = registry.listManifests().map((manifest) => {
       const name = manifest.id
       const row = settingsMap.get(name)
+      const priority = Number(row?.priority ?? 0)
+      const defaultModel = row?.model?.trim() ? row.model.trim() : null
       return {
         name,
         label: manifest.label,
@@ -34,7 +46,9 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
         hint: manifest.hint,
         kind: manifest.kind,
         iconKey: manifest.iconKey,
-        defaultModel: row?.model ?? null,
+        defaultModel,
+        priority,
+        preferredForTasks: preferredProviderName === name,
         configured: registry.isConfigured(name),
         settingsSchema: manifest.fields.map((field) => ({
           ...field,
@@ -75,6 +89,37 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
       ).run(provider, model.trim(), now, now)
 
       return reply.send({ provider, model: model.trim(), updatedAt: now })
+    },
+  )
+
+  app.post<{ Params: { provider: string } }>(
+    '/settings/providers/:provider/prefer',
+    async (request, reply) => {
+      const { provider } = request.params
+
+      if (!isProviderName(provider)) {
+        return reply.status(400).send({
+          error: `Invalid provider: "${provider}"`,
+        })
+      }
+
+      if (!getProviderRegistry().isConfigured(provider)) {
+        return reply.status(400).send({
+          error: `Provider "${provider}" is not configured`,
+        })
+      }
+
+      const db = getDb()
+      const now = Date.now()
+
+      db.prepare(`UPDATE provider_settings SET priority = 0, updated_at = ?`).run(now)
+      db.prepare(
+        `INSERT INTO provider_settings (provider, model, priority, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(provider) DO UPDATE SET priority = excluded.priority, updated_at = excluded.updated_at`,
+      ).run(provider, '', 100, now, now)
+
+      return reply.send({ provider, priority: 100, updatedAt: now })
     },
   )
 

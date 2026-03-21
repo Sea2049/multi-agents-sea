@@ -35,6 +35,18 @@ interface StreamingState {
 
 const SESSION_STORE_KEY = 'chat-session-map';
 
+function sortConfiguredProviders(providers: ProviderConfig[]): ProviderConfig[] {
+  return [...providers].sort((left, right) => {
+    if (right.priority !== left.priority) {
+      return right.priority - left.priority;
+    }
+    if (left.kind !== right.kind) {
+      return left.kind === 'cloud' ? -1 : 1;
+    }
+    return left.label.localeCompare(right.label);
+  });
+}
+
 function loadSessionMap(): Record<string, string> {
   try {
     const raw = sessionStorage.getItem(SESSION_STORE_KEY);
@@ -99,6 +111,7 @@ export default function ChatPanel({
         setProviders(list);
 
         const configured = list.filter((provider) => provider.configured);
+        const sortedConfigured = sortConfiguredProviders(configured);
         if (configured.length === 0) {
           setNoProvider(true);
           setSelectedProvider('');
@@ -109,9 +122,9 @@ export default function ChatPanel({
         }
 
         setNoProvider(false);
-        const preferred = configured.find((item) => item.kind !== 'local') ?? configured[0];
+        const preferred = sortedConfigured[0];
         setSelectedProvider((current) => {
-          if (current && configured.some((provider) => provider.name === current)) {
+          if (current && sortedConfigured.some((provider) => provider.name === current)) {
             return current;
           }
           return preferred.name;

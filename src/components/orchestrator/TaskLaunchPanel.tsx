@@ -47,12 +47,21 @@ function TaskLaunchPanel({
         const hasConfiguredCloudProvider = list.some(
           (item) => item.configured && item.kind !== 'local'
         );
+        const sorted = [...available].sort((left, right) => {
+          if (right.priority !== left.priority) {
+            return right.priority - left.priority;
+          }
+          if (left.kind !== right.kind) {
+            return left.kind === 'cloud' ? -1 : 1;
+          }
+          return left.label.localeCompare(right.label);
+        });
 
-        setProviders(available);
+        setProviders(sorted);
         setNeedsProviderOnboarding(!hasConfiguredCloudProvider);
 
-        if (available.length > 0) {
-          const preferred = available.find((item) => item.kind !== 'local') ?? available[0];
+        if (sorted.length > 0) {
+          const preferred = sorted[0];
           setProvider(preferred.name);
           setModel(preferred.defaultModel ?? '');
         } else {
@@ -194,7 +203,7 @@ function TaskLaunchPanel({
             {/* 团队成员列表 */}
             <section className="panel-surface rounded-[26px] p-5">
               <p className="mb-3 text-xs uppercase tracking-[0.2em] text-slate-500">当前团队成员</p>
-              <div className="space-y-2">
+              <div className="max-h-48 space-y-2 overflow-y-auto">
                 {teamMembers.map((agent) => {
                   const division = getDivision(agent);
                   const color = division?.color ?? '#6366f1';

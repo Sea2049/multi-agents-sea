@@ -1,5 +1,7 @@
 # Build Resources
 
+> 与主文档同步：见 [README.md](../README.md)、[CHANGELOG.md](../CHANGELOG.md)、[docs/FRAMEWORK.md](../docs/FRAMEWORK.md)（v1.0.3 · 2026-03-21）。
+
 这个目录存放桌面分发所需的品牌化资源：
 
 - `icon-source.png`: 应用图标源图

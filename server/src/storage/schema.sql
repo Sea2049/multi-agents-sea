@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS provider_settings (
   model TEXT NOT NULL,
   endpoint TEXT,
   settings_json TEXT,
+  priority INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
@@ -132,3 +133,34 @@ CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
   INSERT INTO memories_fts(memories_fts, rowid, content, agent_id, task_id, category)
   VALUES ('delete', old.rowid, old.content, old.agent_id, old.task_id, old.category);
 END;
+
+-- Entity table for Knowledge Graph
+CREATE TABLE IF NOT EXISTS entities (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  type TEXT NOT NULL,
+  description TEXT,
+  source_memory_id TEXT REFERENCES memories(id) ON DELETE SET NULL,
+  embedding_status TEXT NOT NULL DEFAULT 'pending',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+-- Relation table for Knowledge Graph
+CREATE TABLE IF NOT EXISTS relations (
+  id TEXT PRIMARY KEY,
+  source_entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+  target_entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+  relation_type TEXT NOT NULL,
+  confidence REAL NOT NULL DEFAULT 1.0,
+  source_memory_id TEXT REFERENCES memories(id) ON DELETE SET NULL,
+  created_at INTEGER NOT NULL
+);
+
+-- Entity embeddings for deduplication
+CREATE TABLE IF NOT EXISTS entity_embeddings (
+  entity_id TEXT PRIMARY KEY REFERENCES entities(id) ON DELETE CASCADE,
+  embedding BLOB NOT NULL,
+  embedding_model TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);

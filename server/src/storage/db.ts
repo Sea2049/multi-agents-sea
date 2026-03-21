@@ -76,6 +76,7 @@ function ensureSessionSchema(database: BetterSqlite3Database): void {
 
 function ensureProviderSettingsSchema(database: BetterSqlite3Database): void {
   ensureColumn(database, 'provider_settings', 'settings_json', 'TEXT')
+  ensureColumn(database, 'provider_settings', 'priority', 'INTEGER NOT NULL DEFAULT 0')
 }
 
 function ensureTaskSchema(database: BetterSqlite3Database): void {
@@ -94,6 +95,17 @@ function ensureSkillSchema(database: BetterSqlite3Database): void {
       updated_at INTEGER NOT NULL
     );
   `)
+
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS remote_skills (
+      id TEXT PRIMARY KEY,
+      url TEXT NOT NULL,
+      sha256 TEXT NOT NULL,
+      name TEXT NOT NULL,
+      installed_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+  `)
 }
 
 function ensurePipelineSchema(database: BetterSqlite3Database): void {
@@ -107,6 +119,51 @@ function ensurePipelineSchema(database: BetterSqlite3Database): void {
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
+  `)
+}
+
+function ensureGraphSchema(database: BetterSqlite3Database): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS entities (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      type TEXT NOT NULL,
+      description TEXT,
+      source_memory_id TEXT REFERENCES memories(id) ON DELETE SET NULL,
+      embedding_status TEXT NOT NULL DEFAULT 'pending',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS relations (
+      id TEXT PRIMARY KEY,
+      source_entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+      target_entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+      relation_type TEXT NOT NULL,
+      confidence REAL NOT NULL DEFAULT 1.0,
+      source_memory_id TEXT REFERENCES memories(id) ON DELETE SET NULL,
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS entity_embeddings (
+      entity_id TEXT PRIMARY KEY REFERENCES entities(id) ON DELETE CASCADE,
+      embedding BLOB NOT NULL,
+      embedding_model TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS remote_skills (
+      id TEXT PRIMARY KEY,
+      url TEXT NOT NULL,
+      sha256 TEXT NOT NULL,
+      name TEXT NOT NULL,
+      installed_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_relations_source ON relations(source_entity_id);
+    CREATE INDEX IF NOT EXISTS idx_relations_target ON relations(target_entity_id);
+    CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(name);
   `)
 }
 
@@ -162,6 +219,7 @@ export function initDb(dbPath: string): BetterSqlite3Database {
   ensureSkillSchema(db)
   ensurePipelineSchema(db)
   ensureMemorySchema(db)
+  ensureGraphSchema(db)
   tryLoadSqliteVec(db)
 
   // 安全迁移：为已存在的 task_steps 表补充新列（如 DB 已存在则 CREATE TABLE IF NOT EXISTS 不会重建）

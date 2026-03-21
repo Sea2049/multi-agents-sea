@@ -3,7 +3,7 @@ import type { FastifyInstance } from 'fastify'
 import { aggregateResults } from '../orchestrator/aggregator.js'
 import type { StepResult, TaskExecutionEvent, TaskStatus } from '../orchestrator/types.js'
 import { persistTaskLongTermMemories } from '../memory/task-memory-extractor.js'
-import { getProviderFromEnv, isProviderName } from '../providers/index.js'
+import { getRuntimeProviderFromEnv, isProviderName } from '../providers/index.js'
 import { runPipeline, approvePipelineGate } from '../pipelines/engine.js'
 import { createPipeline, deletePipeline, getPipelineById, listPipelines, updatePipeline } from '../pipelines/store.js'
 import { pipelineToTaskPlan, type PipelineDefinition, type PipelineStep } from '../pipelines/types.js'
@@ -209,6 +209,7 @@ function validatePipelineDefinition(body: PipelineBody): string[] {
         if (!(step.dependsOn ?? []).includes(step.sourceStepId)) {
           errors.push(`condition step "${step.id}" must depend on sourceStepId "${step.sourceStepId}"`)
         }
+        // eslint-disable-next-line no-case-declarations
         const branchTargets = [...(step.onTrue ?? []), ...(step.onFalse ?? [])]
         if (branchTargets.length === 0) {
           errors.push(`condition step "${step.id}" must declare at least one branch target`)
@@ -223,6 +224,42 @@ function validatePipelineDefinition(body: PipelineBody): string[] {
           }
         }
         break
+      case 'loop': {
+        if (!step.bodyStepIds?.length) {
+          errors.push(`loop step "${step.id}" is missing bodyStepIds`)
+        } else {
+          for (const bsId of step.bodyStepIds) {
+            if (!stepMap.has(bsId)) {
+              errors.push(`loop step "${step.id}" references unknown body step "${bsId}"`)
+            }
+          }
+        }
+        if (!step.maxIterations || step.maxIterations < 1) {
+          errors.push(`loop step "${step.id}" has invalid maxIterations (must be >= 1)`)
+        }
+        break
+      }
+      case 'map': {
+        if (!step.sourceExpression?.trim()) {
+          errors.push(`map step "${step.id}" is missing sourceExpression`)
+        }
+        if (!step.bodyStepIds?.length) {
+          errors.push(`map step "${step.id}" is missing bodyStepIds`)
+        } else {
+          for (const bsId of step.bodyStepIds) {
+            if (!stepMap.has(bsId)) {
+              errors.push(`map step "${step.id}" references unknown body step "${bsId}"`)
+            }
+          }
+        }
+        break
+      }
+      case 'sub_pipeline': {
+        if (!step.pipelineId?.trim()) {
+          errors.push(`sub_pipeline step "${step.id}" is missing pipelineId`)
+        }
+        break
+      }
       default:
         errors.push(`unsupported step kind: ${(step as PipelineStep).kind}`)
     }
@@ -233,6 +270,41 @@ function validatePipelineDefinition(body: PipelineBody): string[] {
   }
 
   return errors
+}
+
+async function detectSubPipelineCycles(
+  pipelineId: string,
+  definition: PipelineBody,
+  maxDepth = 10,
+  visited: Set<string> = new Set(),
+): Promise<string | null> {
+  if (visited.has(pipelineId)) {
+    return pipelineId
+  }
+  if (visited.size >= maxDepth) {
+    return null
+  }
+  visited.add(pipelineId)
+
+  for (const step of definition.steps) {
+    if ((step as PipelineStep).kind === 'sub_pipeline') {
+      const subStep = step as Extract<PipelineStep, { kind: 'sub_pipeline' }>
+      if (!subStep.pipelineId?.trim()) continue
+
+      const child = getPipelineById(subStep.pipelineId)
+      if (!child) continue
+
+      const cycleId = await detectSubPipelineCycles(
+        subStep.pipelineId,
+        { name: child.definition.name, steps: child.definition.steps } as PipelineBody,
+        maxDepth,
+        new Set(visited),
+      )
+      if (cycleId) return cycleId
+    }
+  }
+
+  return null
 }
 
 function resolveAggregatorConfig(
@@ -282,7 +354,7 @@ async function runPipelineTask(params: {
       definition,
       snapshot,
       runtimeDefaults,
-      providerFactory: (providerName) => getProviderFromEnv(providerName),
+      providerFactory: (providerName) => getRuntimeProviderFromEnv(providerName),
       onEvent: (event) => {
         if (event.type !== 'task_completed' && event.type !== 'task_failed') {
           broadcastTaskEvent(taskId, event)
@@ -304,7 +376,7 @@ async function runPipelineTask(params: {
           objective,
           plan,
           stepResults,
-          provider: getProviderFromEnv(aggregatorConfig.provider),
+          provider: getRuntimeProviderFromEnv(aggregatorConfig.provider),
           model: aggregatorConfig.model,
           snapshot,
         })
@@ -324,7 +396,7 @@ async function runPipelineTask(params: {
           plan,
           stepResults,
           report: finalReport,
-          provider: getProviderFromEnv(aggregatorConfig.provider),
+          provider: getRuntimeProviderFromEnv(aggregatorConfig.provider),
           model: aggregatorConfig.model,
         })
       } catch {
@@ -389,6 +461,11 @@ export async function pipelinesRoutes(app: FastifyInstance): Promise<void> {
       return reply.status(400).send({ error: errors.join('\n') })
     }
 
+    const cycleId = await detectSubPipelineCycles(randomUUID(), request.body)
+    if (cycleId) {
+      return reply.status(400).send({ error: `sub_pipeline circular reference detected involving pipeline "${cycleId}"` })
+    }
+
     const created = createPipeline({
       name: request.body.name,
       description: request.body.description,
@@ -407,6 +484,11 @@ export async function pipelinesRoutes(app: FastifyInstance): Promise<void> {
     const errors = validatePipelineDefinition(request.body)
     if (errors.length > 0) {
       return reply.status(400).send({ error: errors.join('\n') })
+    }
+
+    const cycleId = await detectSubPipelineCycles(request.params.id, request.body)
+    if (cycleId) {
+      return reply.status(400).send({ error: `sub_pipeline circular reference detected involving pipeline "${cycleId}"` })
     }
 
     try {

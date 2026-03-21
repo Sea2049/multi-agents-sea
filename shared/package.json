@@ -1,6 +1,6 @@
 {
   "name": "agency-agents-shared",
-  "version": "1.0.0",
+  "version": "1.0.3",
   "type": "module",
   "main": "agents/catalog.ts"
 }

@@ -4,6 +4,7 @@ import {
   Bot,
   CheckCircle2,
   ChevronDown,
+  Cloud,
   Loader2,
   Server,
   Sparkles,
@@ -55,6 +56,8 @@ function ProviderIcon({ iconKey }: { iconKey: string }) {
       return <Zap size={18} className="text-cyan-300" />
     case 'server':
       return <Server size={18} className="text-violet-300" />
+    case 'cloud':
+      return <Cloud size={18} className="text-sky-300" />
     default:
       return <Sparkles size={18} className="text-slate-300" />
   }
@@ -62,13 +65,24 @@ function ProviderIcon({ iconKey }: { iconKey: string }) {
 
 function StatusBadge({
   configured,
+  preferredForTasks,
   status,
   error,
 }: {
   configured: boolean
+  preferredForTasks: boolean
   status: ConnectionStatus
   error?: string
 }) {
+  if (preferredForTasks) {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-violet-400/20 bg-violet-400/10 px-2.5 py-1 text-[11px] text-violet-200">
+        <Zap size={11} />
+        任务默认
+      </span>
+    )
+  }
+
   if (status === 'testing') {
     return (
       <span className="inline-flex items-center gap-1.5 rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2.5 py-1 text-[11px] text-cyan-200">
@@ -312,6 +326,20 @@ export default function ProviderSettings({ onClose, onSaved }: ProviderSettingsP
     }
   }, [updateProviderState])
 
+  const handlePreferProvider = useCallback(async (providerName: string) => {
+    try {
+      await apiClient.preferProvider(providerName)
+      await loadProviders()
+      onSaved?.()
+    } catch (err) {
+      updateProviderState(providerName, (state) => ({
+        ...state,
+        status: 'error',
+        statusError: err instanceof Error ? err.message : '设置任务默认 Provider 失败',
+      }))
+    }
+  }, [loadProviders, onSaved, updateProviderState])
+
   return (
     <AnimatePresence>
       <motion.div
@@ -387,7 +415,12 @@ export default function ProviderSettings({ onClose, onSaved }: ProviderSettingsP
                     <p className="text-xs text-slate-500">{state.config.hint}</p>
                   </div>
                 </div>
-                <StatusBadge configured={state.config.configured} status={state.status} error={state.statusError} />
+                <StatusBadge
+                  configured={state.config.configured}
+                  preferredForTasks={state.config.preferredForTasks}
+                  status={state.status}
+                  error={state.statusError}
+                />
               </div>
 
               <p className="mb-4 text-sm leading-6 text-slate-400">{state.config.description}</p>
@@ -473,6 +506,14 @@ export default function ProviderSettings({ onClose, onSaved }: ProviderSettingsP
                 )}
 
                 <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={() => void handlePreferProvider(state.config.name)}
+                    disabled={!state.config.configured}
+                    className="inline-flex items-center gap-2 rounded-full border border-violet-400/20 bg-violet-400/10 px-4 py-2 text-sm text-violet-100 transition hover:bg-violet-400/15 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <Zap size={14} />
+                    设为任务默认
+                  </button>
                   <button
                     onClick={() => void handleTestConnection(state.config.name)}
                     disabled={state.status === 'testing'}

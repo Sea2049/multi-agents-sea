@@ -47,6 +47,7 @@ export interface StepResult {
   startedAt: number
   completedAt: number
   error?: string
+  structuredOutput?: unknown
 }
 
 export interface TaskExecutionEvent {

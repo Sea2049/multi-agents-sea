@@ -7,6 +7,8 @@ import {
   searchMemoriesWithFilters,
   getMemoryById,
   pinMemory,
+  updateMemoryContent,
+  mergeMemories,
 } from '../memory/store.js'
 
 export async function memoryRoutes(app: FastifyInstance): Promise<void> {
@@ -89,6 +91,26 @@ export async function memoryRoutes(app: FastifyInstance): Promise<void> {
     return reply.send({ deleted })
   })
 
+  // POST /api/memories/merge
+  app.post('/memories/merge', async (req, reply) => {
+    const body = req.body as { sourceIds?: unknown; mergedContent?: unknown }
+
+    if (!Array.isArray(body.sourceIds) || body.sourceIds.length === 0) {
+      return reply.status(400).send({ error: 'sourceIds must be a non-empty array' })
+    }
+
+    if (typeof body.mergedContent !== 'string' || !body.mergedContent.trim()) {
+      return reply.status(400).send({ error: 'mergedContent must be a non-empty string' })
+    }
+
+    const merged = mergeMemories(body.sourceIds as string[], body.mergedContent.trim())
+    if (!merged) {
+      return reply.status(404).send({ error: 'Source memories not found' })
+    }
+
+    return reply.status(201).send({ memory: merged })
+  })
+
   // POST /api/memories/:id/pin
   app.post<{ Params: { id: string } }>('/memories/:id/pin', async (req, reply) => {
     const { id } = req.params
@@ -105,6 +127,22 @@ export async function memoryRoutes(app: FastifyInstance): Promise<void> {
       pinSource: 'manual',
       pinReason: body.pinReason,
     })
+    return reply.send({ memory: updated })
+  })
+
+  // PATCH /api/memories/:id - edit memory content
+  app.patch<{ Params: { id: string } }>('/memories/:id', async (req, reply) => {
+    const { id } = req.params
+    const body = req.body as { content?: unknown }
+
+    if (typeof body.content !== 'string' || !body.content.trim()) {
+      return reply.status(400).send({ error: 'content must be a non-empty string' })
+    }
+
+    const existing = getMemoryById(id)
+    if (!existing) return reply.status(404).send({ error: 'Memory not found' })
+
+    const updated = updateMemoryContent(id, body.content.trim())
     return reply.send({ memory: updated })
   })
 

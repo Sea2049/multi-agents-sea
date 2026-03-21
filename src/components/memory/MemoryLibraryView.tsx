@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   Database,
+  GitMerge,
+  Pencil,
   Pin,
   PinOff,
   RefreshCw,
@@ -52,7 +54,7 @@ function useDebounce<T>(value: T, delay: number): T {
   return debounced
 }
 
-export function MemoryLibraryView() {
+export function MemoryLibraryView({ onOpenTask }: { onOpenTask?: (taskId: string) => void } = {}) {
   const [memories, setMemories] = useState<MemoryRecord[]>([])
   const [tasks, setTasks] = useState<TaskRecord[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -68,6 +70,16 @@ export function MemoryLibraryView() {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [bulkDeleting, setIsBulkDeleting] = useState(false)
   const [togglingPin, setTogglingPin] = useState<string | null>(null)
+
+  // Edit state
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editContent, setEditContent] = useState('')
+  const [isSaving, setIsSaving] = useState(false)
+
+  // Merge modal state
+  const [showMergeModal, setShowMergeModal] = useState(false)
+  const [mergeContent, setMergeContent] = useState('')
+  const [isMerging, setIsMerging] = useState(false)
 
   const loadData = useCallback(async () => {
     setIsLoading(true)
@@ -231,6 +243,52 @@ export function MemoryLibraryView() {
     }
   }, [])
 
+  const handleStartEdit = useCallback((id: string, content: string) => {
+    setEditingId(id)
+    setEditContent(content)
+  }, [])
+
+  const handleCancelEdit = useCallback(() => {
+    setEditingId(null)
+    setEditContent('')
+  }, [])
+
+  const handleSaveEdit = useCallback(async (id: string) => {
+    if (!editContent.trim()) return
+    setIsSaving(true)
+    try {
+      const { memory: updated } = await apiClient.memory.update(id, { content: editContent.trim() })
+      setMemories(prev => prev.map(m => m.id === id ? updated : m))
+      setEditingId(null)
+      setEditContent('')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '保存失败')
+    } finally {
+      setIsSaving(false)
+    }
+  }, [editContent])
+
+  const handleOpenMergeModal = useCallback(() => {
+    const selectedMemories = memories.filter(m => selected.has(m.id))
+    setMergeContent(selectedMemories.map(m => m.content).join('\n\n'))
+    setShowMergeModal(true)
+  }, [memories, selected])
+
+  const handleMerge = useCallback(async () => {
+    if (!mergeContent.trim()) return
+    setIsMerging(true)
+    try {
+      await apiClient.memory.merge({ sourceIds: [...selected], mergedContent: mergeContent.trim() })
+      setShowMergeModal(false)
+      setSelected(new Set())
+      await loadData()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '合并失败')
+    } finally {
+      setIsMerging(false)
+    }
+  }, [mergeContent, selected, loadData])
+
   const searchRef = useRef<HTMLInputElement>(null)
 
   return (
@@ -341,14 +399,25 @@ export function MemoryLibraryView() {
           >
             <div className="flex items-center justify-between px-6 py-2 bg-red-500/10 border-b border-red-500/20">
               <span className="text-xs text-red-400">已选 {selected.size} 条</span>
-              <button
-                onClick={handleBulkDelete}
-                disabled={bulkDeleting}
-                className="flex items-center gap-1.5 px-3 py-1 rounded text-xs font-medium bg-red-500/20 text-red-300 hover:bg-red-500/30 transition-colors disabled:opacity-50"
-              >
-                <Trash2 className="w-3 h-3" />
-                {bulkDeleting ? '删除中…' : '批量删除'}
-              </button>
+              <div className="flex items-center gap-2">
+                {selected.size >= 2 && (
+                  <button
+                    onClick={handleOpenMergeModal}
+                    className="flex items-center gap-1.5 px-3 py-1 rounded text-xs font-medium bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30 transition-colors"
+                  >
+                    <GitMerge className="w-3 h-3" />
+                    合并选中
+                  </button>
+                )}
+                <button
+                  onClick={handleBulkDelete}
+                  disabled={bulkDeleting}
+                  className="flex items-center gap-1.5 px-3 py-1 rounded text-xs font-medium bg-red-500/20 text-red-300 hover:bg-red-500/30 transition-colors disabled:opacity-50"
+                >
+                  <Trash2 className="w-3 h-3" />
+                  {bulkDeleting ? '删除中…' : '批量删除'}
+                </button>
+              </div>
             </div>
           </motion.div>
         )}
@@ -426,9 +495,37 @@ export function MemoryLibraryView() {
 
                   {/* Content */}
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm text-white/85 leading-relaxed break-words">
-                      {memory.content}
-                    </p>
+                    {editingId === memory.id ? (
+                      <div className="space-y-2">
+                        <textarea
+                          value={editContent}
+                          onChange={e => setEditContent(e.target.value)}
+                          rows={3}
+                          className="w-full text-sm text-white/85 bg-white/8 border border-indigo-500/40 rounded-lg px-3 py-2 resize-none focus:outline-none focus:border-indigo-500/70 leading-relaxed"
+                          autoFocus
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleSaveEdit(memory.id)}
+                            disabled={isSaving || !editContent.trim()}
+                            className="px-3 py-1 rounded text-xs font-medium bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30 transition-colors disabled:opacity-50"
+                          >
+                            {isSaving ? '保存中…' : '保存'}
+                          </button>
+                          <button
+                            onClick={handleCancelEdit}
+                            disabled={isSaving}
+                            className="px-3 py-1 rounded text-xs font-medium bg-white/5 text-white/50 hover:bg-white/10 transition-colors"
+                          >
+                            取消
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="text-sm text-white/85 leading-relaxed break-words">
+                        {memory.content}
+                      </p>
+                    )}
 
                     {memory.isPinned && memory.pinReason && (
                       <p className="mt-1 text-[11px] text-amber-400/60 italic">
@@ -453,9 +550,19 @@ export function MemoryLibraryView() {
                       </span>
 
                       {task && (
-                        <span className="text-[11px] text-white/25" title={task.objective}>
-                          任务: {truncateText(task.objective, 20)}
-                        </span>
+                        onOpenTask ? (
+                          <button
+                            onClick={() => onOpenTask(memory.taskId!)}
+                            className="text-[11px] text-indigo-400/70 hover:text-indigo-400 transition-colors"
+                            title={task.objective}
+                          >
+                            任务: {truncateText(task.objective, 20)}
+                          </button>
+                        ) : (
+                          <span className="text-[11px] text-white/25" title={task.objective}>
+                            任务: {truncateText(task.objective, 20)}
+                          </span>
+                        )
                       )}
 
                       {memory.agentId && (
@@ -472,6 +579,17 @@ export function MemoryLibraryView() {
 
                   {/* Action Buttons */}
                   <div className="flex-shrink-0 flex items-center gap-1">
+                    {editingId !== memory.id && (
+                      <button
+                        onClick={() => handleStartEdit(memory.id, memory.content)}
+                        className="p-1.5 rounded-lg text-white/25 hover:text-indigo-400 hover:bg-indigo-500/10 transition-colors"
+                        title="编辑记忆"
+                        aria-label="编辑记忆"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+
                     <button
                       onClick={() => handlePin(memory.id, memory.isPinned)}
                       disabled={togglingPin === memory.id}
@@ -501,6 +619,68 @@ export function MemoryLibraryView() {
           })}
         </AnimatePresence>
       </div>
+
+      {/* Merge Modal */}
+      {showMergeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className="relative w-full max-w-lg mx-4 bg-[#0d0d0d] border border-white/12 rounded-2xl shadow-2xl overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/8">
+              <div className="flex items-center gap-2">
+                <GitMerge className="w-4 h-4 text-indigo-400" />
+                <h2 className="text-sm font-semibold text-white">合并 {selected.size} 条记忆</h2>
+              </div>
+              <button
+                onClick={() => setShowMergeModal(false)}
+                className="p-1.5 rounded-lg text-white/30 hover:text-white/60 hover:bg-white/8 transition-colors"
+                aria-label="关闭"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="px-5 py-4 space-y-4 max-h-[70vh] overflow-y-auto">
+              <div className="space-y-2">
+                <p className="text-[11px] font-medium text-white/40 uppercase tracking-wide">原始记忆（将被删除）</p>
+                <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                  {memories.filter(m => selected.has(m.id)).map(m => (
+                    <div key={m.id} className="px-3 py-2 rounded-lg bg-white/4 border border-white/6">
+                      <p className="text-xs text-white/60 leading-relaxed">{m.content}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <p className="text-[11px] font-medium text-white/40 uppercase tracking-wide">合并后内容（可编辑）</p>
+                <textarea
+                  value={mergeContent}
+                  onChange={e => setMergeContent(e.target.value)}
+                  rows={5}
+                  className="w-full text-sm text-white/85 bg-white/5 border border-white/10 rounded-lg px-3 py-2 resize-none focus:outline-none focus:border-indigo-500/60 focus:bg-white/8 transition leading-relaxed"
+                  placeholder="编辑合并后的记忆内容…"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-white/8">
+              <button
+                onClick={() => setShowMergeModal(false)}
+                disabled={isMerging}
+                className="px-4 py-1.5 rounded-lg text-sm text-white/50 hover:text-white/80 hover:bg-white/8 transition-colors disabled:opacity-50"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleMerge}
+                disabled={isMerging || !mergeContent.trim()}
+                className="px-4 py-1.5 rounded-lg text-sm font-medium bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30 transition-colors disabled:opacity-50"
+              >
+                {isMerging ? '合并中…' : '确认合并'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -12,6 +12,8 @@ const SHOULD_OPEN_DEVTOOLS =
 const SECRET_ENV_MAPPINGS = {
   openai: 'PROVIDER_OPENAI_KEY',
   anthropic: 'PROVIDER_ANTHROPIC_KEY',
+  dashscope: 'PROVIDER_DASHSCOPE_KEY',
+  'dashscope:baseUrl': 'PROVIDER_DASHSCOPE_URL',
   minimax: 'PROVIDER_MINIMAX_KEY',
   'minimax:baseUrl': 'PROVIDER_MINIMAX_URL',
   'ollama:baseUrl': 'PROVIDER_OLLAMA_URL',

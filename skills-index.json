@@ -1,0 +1,20 @@
+[
+  {
+    "id": "example-http-tool",
+    "name": "HTTP Request Tool",
+    "description": "Make HTTP GET/POST requests from within agent steps",
+    "author": "multi-agents-sea",
+    "url": "https://raw.githubusercontent.com/multi-agents-sea/skills/main/http-tool",
+    "tags": ["networking", "http", "api"],
+    "version": "1.0.0"
+  },
+  {
+    "id": "example-csv-reader",
+    "name": "CSV Reader Tool",
+    "description": "Read and parse CSV files from the workspace",
+    "author": "multi-agents-sea",
+    "url": "https://raw.githubusercontent.com/multi-agents-sea/skills/main/csv-reader",
+    "tags": ["data", "csv", "files"],
+    "version": "1.0.0"
+  }
+]

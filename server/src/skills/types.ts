@@ -1,6 +1,6 @@
 import type { ToolDefinition } from '../providers/types.js'
 
-export type SkillSource = 'workspace' | 'user' | 'bundled'
+export type SkillSource = 'workspace' | 'user' | 'remote' | 'bundled'
 export type SkillMode = 'prompt-only' | 'tool-contributor'
 
 export interface SkillRequires {
@@ -22,6 +22,26 @@ export interface SkillMetadata {
   os?: Array<'win32' | 'linux' | 'darwin'>
   homepage?: string
   tools?: SkillToolDeclaration[]
+  sandbox?: 'worker' | 'docker'
+}
+
+export interface RemoteSkillIndexEntry {
+  id: string
+  name: string
+  description: string
+  author: string
+  url: string
+  tags: string[]
+  version?: string
+}
+
+export interface RemoteSkillRecord {
+  id: string
+  url: string
+  sha256: string
+  name: string
+  installedAt: number
+  updatedAt: number
 }
 
 export interface SkillDefinition {

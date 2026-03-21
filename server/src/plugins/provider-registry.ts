@@ -1,8 +1,10 @@
 import { AnthropicProvider } from '../providers/anthropic.js'
+import { DashScopeProvider } from '../providers/dashscope.js'
 import { MiniMaxProvider } from '../providers/minimax.js'
 import { OllamaProvider } from '../providers/ollama.js'
 import { OpenAIProvider } from '../providers/openai.js'
 import type { LLMProvider } from '../providers/types.js'
+import { ensureProjectEnvLoaded } from '../config/env.js'
 import type { ProviderFactory, ProviderManifest } from './types.js'
 
 interface ProviderRegistryEntry {
@@ -117,6 +119,47 @@ function createBuiltinManifests(): ProviderRegistryEntry[] {
     },
     {
       manifest: {
+        id: 'dashscope',
+        label: 'DashScope',
+        description: 'Alibaba Cloud DashScope OpenAI-compatible provider',
+        hint: '阿里云百炼 / Qwen，兼容 OpenAI Chat Completions',
+        kind: 'cloud',
+        iconKey: 'cloud',
+        adapter: 'openai',
+        fields: [
+          {
+            key: 'apiKey',
+            label: 'API Key',
+            inputType: 'secret',
+            required: true,
+            placeholder: 'sk-...',
+            storageKey: 'dashscope',
+            envVar: 'PROVIDER_DASHSCOPE_KEY',
+          },
+          {
+            key: 'baseUrl',
+            label: 'Base URL',
+            inputType: 'url',
+            placeholder: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+            defaultValue: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+            storageKey: 'dashscope:baseUrl',
+            envVar: 'PROVIDER_DASHSCOPE_URL',
+          },
+        ],
+      },
+      factory: {
+        create(credentials) {
+          const apiKey = credentials['apiKey']
+          if (!apiKey) {
+            throw new Error('DashScope provider requires credentials.apiKey')
+          }
+          const baseUrl = credentials['baseUrl'] ?? 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+          return new DashScopeProvider(apiKey, baseUrl)
+        },
+      },
+    },
+    {
+      manifest: {
         id: 'ollama',
         label: 'Ollama',
         description: 'Local Ollama provider',
@@ -175,6 +218,8 @@ export class ProviderRegistry {
   }
 
   createFromEnv(id: string): LLMProvider {
+    ensureProjectEnvLoaded()
+
     const manifest = this.getManifest(id)
     if (!manifest) {
       throw new Error(`Unknown provider: ${id}`)
@@ -197,6 +242,8 @@ export class ProviderRegistry {
   }
 
   isConfigured(id: string): boolean {
+    ensureProjectEnvLoaded()
+
     const manifest = this.getManifest(id)
     if (!manifest) {
       return false

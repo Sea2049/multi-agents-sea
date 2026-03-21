@@ -257,7 +257,7 @@ export default function TaskFlowView({ plan, steps }: TaskFlowViewProps) {
 
       <div
         ref={containerRef}
-        className={`rounded-[20px] border border-white/[0.06] bg-black/20 p-3 ${canScroll ? 'overflow-x-auto' : ''}`}
+        className={`max-h-[480px] overflow-auto rounded-[20px] border border-white/[0.06] bg-black/20 p-3 ${canScroll ? 'overflow-x-auto' : ''}`}
       >
         <svg
           width={Math.max(svgW, containerW - 24)}

@@ -1,5 +1,6 @@
 import type { LLMProvider } from './types.js'
 import { getProviderRegistry } from '../plugins/provider-registry.js'
+import { getRuntimeProviderFromEnv as createRuntimeProviderFromEnv } from './runtime-fallback.js'
 
 export type ProviderName = string
 
@@ -12,6 +13,10 @@ export function createProvider(
 
 export function getProviderFromEnv(name: ProviderName): LLMProvider {
   return getProviderRegistry().createFromEnv(name)
+}
+
+export function getRuntimeProviderFromEnv(name: ProviderName): LLMProvider {
+  return createRuntimeProviderFromEnv(name)
 }
 
 export function listProviderNames(): string[] {

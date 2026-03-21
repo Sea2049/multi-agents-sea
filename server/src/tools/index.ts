@@ -7,6 +7,7 @@ import { getToolRegistry } from './registry.js'
 import { WEB_SEARCH_DEFINITION, executeWebSearch } from './web-search.js'
 import { FILE_READ_DEFINITION, executeFileRead } from './file-read.js'
 import { CODE_EXEC_DEFINITION, executeCodeExec } from './code-exec.js'
+import { runInSandbox } from './sandbox-worker.js'
 
 export type { ToolDefinition, ToolCallRequest, ToolCallResult }
 export { WEB_SEARCH_DEFINITION, FILE_READ_DEFINITION, CODE_EXEC_DEFINITION }
@@ -46,6 +47,10 @@ async function loadSkillToolModule(skill: SkillState, handlerPath: string): Prom
   return module
 }
 
+function shouldUseSandbox(skill: SkillState): boolean {
+  return skill.source === 'remote' || skill.metadata.sandbox === 'worker'
+}
+
 export async function syncSkillToolsFromStates(skills: SkillState[]): Promise<void> {
   ensureBuiltinToolsRegistered()
   const registry = getToolRegistry()
@@ -59,19 +64,31 @@ export async function syncSkillToolsFromStates(skills: SkillState[]): Promise<vo
 
     for (const tool of skill.metadata.tools ?? []) {
       const handlerPath = join(skill.dirPath, tool.handler)
+      const useSandbox = shouldUseSandbox(skill)
+      const context = {
+        skillId: skill.id,
+        toolName: tool.name,
+        workspaceRoot: process.cwd(),
+      }
 
       try {
-        const module = await loadSkillToolModule(skill, handlerPath)
-        registry.registerSkillTool(skill.id, {
-          name: tool.name,
-          description: tool.description,
-          inputSchema: tool.inputSchema,
-        }, (input) => Promise.resolve(module.execute!(input, {
-          skillId: skill.id,
-          toolName: tool.name,
-          workspaceRoot: process.cwd(),
-          env: process.env,
-        })))
+        if (useSandbox) {
+          registry.registerSkillTool(skill.id, {
+            name: tool.name,
+            description: tool.description,
+            inputSchema: tool.inputSchema,
+          }, (input) => runInSandbox(handlerPath, input, context))
+        } else {
+          const module = await loadSkillToolModule(skill, handlerPath)
+          registry.registerSkillTool(skill.id, {
+            name: tool.name,
+            description: tool.description,
+            inputSchema: tool.inputSchema,
+          }, (input) => Promise.resolve(module.execute!(input, {
+            ...context,
+            env: process.env,
+          })))
+        }
       } catch (error) {
         console.warn(
           `[skills] failed to register tool "${tool.name}" from skill "${skill.id}": ${error instanceof Error ? error.message : String(error)}`,

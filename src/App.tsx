@@ -405,7 +405,7 @@ function App() {
       <div className="pointer-events-none absolute -left-40 top-24 h-[420px] w-[420px] rounded-full bg-[radial-gradient(circle,rgba(138,208,255,0.14),transparent_64%)] blur-3xl" />
       <div className="pointer-events-none absolute right-[-160px] top-[-120px] h-[360px] w-[360px] rounded-full bg-[radial-gradient(circle,rgba(151,162,255,0.12),transparent_68%)] blur-3xl" />
 
-      <aside className="panel-surface-strong network-shell relative z-10 flex w-[308px] shrink-0 flex-col border-r border-[var(--border-soft)] bg-[rgba(5,10,18,0.78)]">
+      <aside className="panel-surface-strong relative z-10 h-full w-[308px] shrink-0 overflow-x-hidden overflow-y-auto border-r border-[var(--border-soft)] bg-[rgba(5,10,18,0.78)]">
         <div className="border-b border-[var(--border-soft)] px-5 py-5">
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-center gap-3">
@@ -567,7 +567,7 @@ function App() {
             <span>Divisions Mesh</span>
             <span>{populatedDivisions}</span>
           </div>
-          <div className="space-y-2 overflow-y-auto pr-1">
+          <div className="space-y-2 pr-1">
             {divisions.map((division) => {
               const isActive = activeView === 'detail' && selectedDivision?.id === division.id;
               return (
@@ -608,7 +608,7 @@ function App() {
           </div>
         </div>
 
-        <div className="mt-auto border-t border-[var(--border-soft)] px-4 py-4">
+        <div className="border-t border-[var(--border-soft)] px-4 py-4">
           {showProviderSetupHint && (
             <div className="mb-4 rounded-[24px] border border-amber-400/18 bg-amber-400/[0.07] px-4 py-4 text-amber-100">
               <p className="text-sm font-medium">首次启动建议先配置 Provider</p>
@@ -672,7 +672,7 @@ function App() {
         <header className="sticky top-0 z-20 px-8 pt-6">
           <div className="mx-auto max-w-[1440px]">
             <div className="panel-surface-strong panel-grid rounded-[30px] border border-white/[0.08]">
-              <div className="flex flex-col gap-6 px-8 py-7">
+              <div className="flex flex-col gap-4 px-8 py-5 xl:gap-6 xl:py-7">
                 <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
                   <div className="max-w-3xl">
                     <div className="mb-3 flex flex-wrap items-center gap-2.5">
@@ -686,7 +686,7 @@ function App() {
                     </div>
 
                     <h2
-                      className="text-4xl font-semibold tracking-[0.03em] text-white xl:text-[44px]"
+                      className="text-3xl font-semibold tracking-[0.03em] text-white xl:text-[44px]"
                       style={{ fontFamily: 'var(--font-display)' }}
                     >
                       {headerMeta.title}
@@ -705,7 +705,7 @@ function App() {
                   </div>
                 </div>
 
-                <div className="grid gap-3 md:grid-cols-3">
+                <div className="hidden gap-3 xl:grid xl:grid-cols-3">
                   {commandSignals.map((signal) => (
                     <div
                       key={signal.label}

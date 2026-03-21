@@ -153,40 +153,55 @@ export async function executePlan(params: SchedulerParams): Promise<Map<string, 
     // is called due to concurrent step callbacks.
     let terminated = false
 
+    function markSkippedDueToDependency(stepId: string): void {
+      const step = stepMap.get(stepId)
+      if (!step || !pendingSteps.has(stepId)) {
+        return
+      }
+
+      pendingSteps.delete(stepId)
+      failedSteps.add(stepId)
+      hasFailure = true
+      onEvent({
+        type: 'step_skipped',
+        taskId: plan.taskId,
+        stepId,
+        agentId: step.assignee,
+        output: 'Skipped because dependency failed',
+        timestamp: Date.now(),
+      })
+    }
+
     function getReadySteps(): TaskStep[] {
+      let changed = true
+      while (changed) {
+        changed = false
+        const skippedThisPass: string[] = []
+
+        for (const stepId of pendingSteps) {
+          const step = stepMap.get(stepId)!
+          const depsHasFailed = step.dependsOn.some((dep) => failedSteps.has(dep))
+          if (depsHasFailed) {
+            skippedThisPass.push(stepId)
+          }
+        }
+
+        for (const stepId of skippedThisPass) {
+          markSkippedDueToDependency(stepId)
+          changed = true
+        }
+      }
+
       if (runningSteps.size >= maxConcurrent) return []
       const ready: TaskStep[] = []
-      const skipped: string[] = []
 
       for (const stepId of pendingSteps) {
         const step = stepMap.get(stepId)!
         const depsAllDone = step.dependsOn.every((dep) => completedSteps.has(dep))
-        // 如果依赖中有 failed 的，标记为跳过（收集后统一处理，避免在迭代中修改 Set）
-        const depsHasFailed = step.dependsOn.some((dep) => failedSteps.has(dep))
-        if (depsHasFailed) {
-          skipped.push(stepId)
-          continue
-        }
         if (depsAllDone) {
           ready.push(step)
           if (ready.length + runningSteps.size >= maxConcurrent) break
         }
-      }
-
-      // 处理因依赖失败而需跳过的步骤：统一在迭代结束后修改集合
-      for (const stepId of skipped) {
-        const step = stepMap.get(stepId)!
-        pendingSteps.delete(stepId)
-        failedSteps.add(stepId)
-        hasFailure = true
-        onEvent({
-          type: 'step_failed',
-          taskId: plan.taskId,
-          stepId,
-          agentId: step.assignee,
-          error: `Skipped because dependency failed`,
-          timestamp: Date.now(),
-        })
       }
 
       return ready

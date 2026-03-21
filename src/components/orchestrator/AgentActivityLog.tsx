@@ -228,7 +228,10 @@ function EventRow({ event, steps }: { event: TaskExecutionEvent; steps: TaskStep
               🔧 {event.toolName}
             </p>
             {event.toolInput && Object.keys(event.toolInput).length > 0 && (
-              <p className="mt-1 text-[10px] text-slate-500 font-mono truncate">
+              <p
+                className="mt-1 truncate font-mono text-[10px] text-slate-500"
+                title={JSON.stringify(event.toolInput)}
+              >
                 {JSON.stringify(event.toolInput).slice(0, 120)}
               </p>
             )}
@@ -241,7 +244,10 @@ function EventRow({ event, steps }: { event: TaskExecutionEvent; steps: TaskStep
               {event.toolIsError ? '❌' : '✅'} {event.toolName}
             </p>
             {event.toolOutput && (
-              <p className="mt-1 text-[10px] text-slate-500 font-mono truncate">
+              <p
+                className="mt-1 truncate font-mono text-[10px] text-slate-500"
+                title={event.toolOutput}
+              >
                 {event.toolOutput.slice(0, 120)}
               </p>
             )}

@@ -209,23 +209,29 @@ async function loadSkillsForSource(rootDir: string, source: SkillSource): Promis
 
 function sortSkillsByPrecedence(skills: SkillDefinition[]): SkillDefinition[] {
   const precedence: Record<SkillSource, number> = {
-    workspace: 3,
-    user: 2,
+    workspace: 4,
+    user: 3,
+    remote: 2,
     bundled: 1,
   }
 
   return [...skills].sort((left, right) => precedence[right.source] - precedence[left.source])
 }
 
+function getRemoteSkillsDir(): string {
+  return process.env['SEA_REMOTE_SKILLS_DIR']?.trim() || join(homedir(), '.sea', 'skills', 'remote')
+}
+
 export async function loadAllSkills(): Promise<SkillDefinition[]> {
-  const [workspaceSkills, userSkills, bundledSkills] = await Promise.all([
+  const [workspaceSkills, userSkills, remoteSkills, bundledSkills] = await Promise.all([
     loadSkillsForSource(getWorkspaceSkillsDir(), 'workspace'),
     loadSkillsForSource(getUserSkillsDir(), 'user'),
+    loadSkillsForSource(getRemoteSkillsDir(), 'remote'),
     loadSkillsForSource(BUNDLED_SKILLS_DIR, 'bundled'),
   ])
 
   const deduped = new Map<string, SkillDefinition>()
-  for (const skill of sortSkillsByPrecedence([...workspaceSkills, ...userSkills, ...bundledSkills])) {
+  for (const skill of sortSkillsByPrecedence([...workspaceSkills, ...userSkills, ...remoteSkills, ...bundledSkills])) {
     if (!deduped.has(skill.id)) {
       deduped.set(skill.id, skill)
     }
@@ -235,5 +241,5 @@ export async function loadAllSkills(): Promise<SkillDefinition[]> {
 }
 
 export function getSkillDiscoveryRoots(): string[] {
-  return [getWorkspaceSkillsDir(), getUserSkillsDir(), BUNDLED_SKILLS_DIR]
+  return [getWorkspaceSkillsDir(), getUserSkillsDir(), getRemoteSkillsDir(), BUNDLED_SKILLS_DIR]
 }

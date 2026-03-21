@@ -1,9 +1,10 @@
-import { describe, it, expect, vi } from 'vitest'
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
 import { executePlan } from '../orchestrator/scheduler.js'
 import { validatePlan } from '../orchestrator/plan-validator.js'
 import { createPlan } from '../orchestrator/planner.js'
 import type { LLMProvider, ChatParams, ChatChunk } from '../providers/types.js'
 import type { TaskPlan, TaskExecutionEvent } from '../orchestrator/types.js'
+import { closeDb, initDb } from '../storage/db.js'
 
 // ---------------------------------------------------------------------------
 // Mock LLM provider helpers
@@ -70,6 +71,15 @@ const TWO_STEP_PLAN: TaskPlan = {
 }
 
 const AVAILABLE_AGENTS = new Set(['agent-a', 'agent-b'])
+
+beforeEach(() => {
+  closeDb()
+  initDb(':memory:')
+})
+
+afterEach(() => {
+  closeDb()
+})
 
 // ---------------------------------------------------------------------------
 // 场景1：成功执行（2个步骤，step-2 依赖 step-1）
@@ -242,6 +252,123 @@ describe('Scenario 3: Step execution timeout', () => {
     const eventTypes = events.map((e) => e.type)
     expect(eventTypes).toContain('step_failed')
     expect(eventTypes[eventTypes.length - 1]).toBe('task_failed')
+  })
+
+  it('should mark downstream steps as skipped when an upstream dependency times out', async () => {
+    const events: TaskExecutionEvent[] = []
+    const fastProvider = makeMockProvider('fast output')
+    const slowProvider = makeSlowProvider(500)
+    const threeStepPlan: TaskPlan = {
+      taskId: 'task-timeout-dependency',
+      summary: 'Timeout dependency propagation test',
+      steps: [
+        {
+          id: 'step-1',
+          title: 'Fast step',
+          assignee: 'agent-a',
+          dependsOn: [],
+          objective: 'Complete quickly',
+          expectedOutput: 'Done fast',
+        },
+        {
+          id: 'step-2',
+          title: 'Slow step',
+          assignee: 'agent-b',
+          dependsOn: ['step-1'],
+          objective: 'This step times out',
+          expectedOutput: 'Never completes in time',
+        },
+        {
+          id: 'step-3',
+          title: 'Blocked step',
+          assignee: 'agent-a',
+          dependsOn: ['step-2'],
+          objective: 'Should be skipped after dependency failure',
+          expectedOutput: 'No execution',
+        },
+      ],
+    }
+
+    const results = await executePlan({
+      plan: threeStepPlan,
+      teamMembers: [
+        { agentId: 'agent-a', provider: 'mock-fast', model: 'mock-model' },
+        { agentId: 'agent-b', provider: 'mock-slow', model: 'mock-model' },
+      ],
+      providerFactory: (providerName) => providerName === 'mock-slow' ? slowProvider : fastProvider,
+      onEvent: (e) => events.push(e),
+      timeoutMs: 50,
+    })
+
+    expect(results.get('step-1')?.output).toBe('fast output')
+    expect(results.get('step-2')?.error).toContain('timed out')
+
+    const skippedEvent = events.find(
+      (event) => event.type === 'step_skipped' && event.stepId === 'step-3',
+    )
+    expect(skippedEvent).toBeDefined()
+    expect(skippedEvent?.output).toContain('Skipped because dependency failed')
+    expect(events.at(-1)?.type).toBe('task_failed')
+  })
+
+  it('should propagate skipped status through all downstream dependency levels', async () => {
+    const events: TaskExecutionEvent[] = []
+    const fastProvider = makeMockProvider('unused output')
+    const slowProvider = makeSlowProvider(500)
+    const threeStepPlan: TaskPlan = {
+      taskId: 'task-timeout-root-dependency',
+      summary: 'Root timeout should skip the entire downstream chain',
+      steps: [
+        {
+          id: 'step-1',
+          title: 'Root slow step',
+          assignee: 'agent-a',
+          dependsOn: [],
+          objective: 'This root step times out',
+          expectedOutput: 'Never completes in time',
+        },
+        {
+          id: 'step-2',
+          title: 'First blocked step',
+          assignee: 'agent-b',
+          dependsOn: ['step-1'],
+          objective: 'Should be skipped after root failure',
+          expectedOutput: 'No execution',
+        },
+        {
+          id: 'step-3',
+          title: 'Second blocked step',
+          assignee: 'agent-b',
+          dependsOn: ['step-2'],
+          objective: 'Should also be skipped, not marked deadlocked',
+          expectedOutput: 'No execution',
+        },
+      ],
+    }
+
+    const results = await executePlan({
+      plan: threeStepPlan,
+      teamMembers: [
+        { agentId: 'agent-a', provider: 'mock-slow', model: 'mock-model' },
+        { agentId: 'agent-b', provider: 'mock-fast', model: 'mock-model' },
+      ],
+      providerFactory: (providerName) => providerName === 'mock-slow' ? slowProvider : fastProvider,
+      onEvent: (e) => events.push(e),
+      timeoutMs: 50,
+    })
+
+    expect(results.get('step-1')?.error).toContain('timed out')
+
+    const skippedStepIds = events
+      .filter((event) => event.type === 'step_skipped')
+      .map((event) => event.stepId)
+    expect(skippedStepIds).toEqual(expect.arrayContaining(['step-2', 'step-3']))
+
+    const deadlockFailure = events.find(
+      (event) => event.type === 'step_failed' && event.error?.includes('deadlocked'),
+    )
+    expect(deadlockFailure).toBeUndefined()
+    expect(events.at(-1)?.type).toBe('task_failed')
   })
 })
 

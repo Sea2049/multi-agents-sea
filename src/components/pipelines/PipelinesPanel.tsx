@@ -56,6 +56,18 @@ const SAMPLE_PIPELINE_STEPS: PipelineStep[] = [
   },
 ]
 
+function sortConfiguredProviders(providers: ProviderConfig[]): ProviderConfig[] {
+  return [...providers].sort((left, right) => {
+    if (right.priority !== left.priority) {
+      return right.priority - left.priority
+    }
+    if (left.kind !== right.kind) {
+      return left.kind === 'cloud' ? -1 : 1
+    }
+    return left.label.localeCompare(right.label)
+  })
+}
+
 function formatStepsJson(steps: PipelineStep[]): string {
   return JSON.stringify(steps, null, 2)
 }
@@ -104,7 +116,7 @@ export function PipelinesPanel({ onOpenTask }: PipelinesPanelProps) {
   )
 
   const configuredProviders = useMemo(
-    () => providers.filter((provider) => provider.configured),
+    () => sortConfiguredProviders(providers.filter((provider) => provider.configured)),
     [providers],
   )
   const currentDraftSignature = useMemo(
@@ -131,10 +143,16 @@ export function PipelinesPanel({ onOpenTask }: PipelinesPanelProps) {
       setPipelines(pipelineResponse.pipelines)
       setProviders(providerList)
 
-      const preferredProvider = providerList.find((provider) => provider.configured && provider.kind !== 'local')
-        ?? providerList.find((provider) => provider.configured)
+      const preferredProvider = sortConfiguredProviders(
+        providerList.filter((provider) => provider.configured),
+      )[0]
       if (preferredProvider) {
-        setEditorProvider((current) => current || preferredProvider.name)
+        setEditorProvider((current) => {
+          if (current && providerList.some((provider) => provider.name === current && provider.configured)) {
+            return current
+          }
+          return preferredProvider.name
+        })
         setEditorModel((current) => current || preferredProvider.defaultModel || '')
       }
 

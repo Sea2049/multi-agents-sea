@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { RefreshCw, ShieldCheck, ShieldOff, Sparkles, ToggleLeft, ToggleRight } from 'lucide-react'
+import { RefreshCw, ShieldCheck, ShieldOff, Sparkles, Store, ToggleLeft, ToggleRight } from 'lucide-react'
 import { apiClient, type SkillRecord } from '../../lib/api-client'
+import { SkillMarketView } from './SkillMarketView'
 
 const SOURCE_LABELS: Record<SkillRecord['source'], string> = {
   bundled: '内置',
   user: '用户',
   workspace: '工作区',
+  remote: '远程',
 }
 
 const MODE_LABELS: Record<SkillRecord['mode'], string> = {
@@ -83,53 +85,85 @@ export function SkillsPanel() {
     }
   }, [loadSkills])
 
+  const [activeTab, setActiveTab] = useState<'installed' | 'market'>('installed')
+
   return (
     <div className="space-y-6 px-2 py-2">
-      <section className="panel-surface-strong rounded-[28px] border border-white/[0.08] px-6 py-5">
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="instrument-tag rounded-full px-2.5 py-1 text-[10px] uppercase tracking-[0.22em]">
-                Skills
-              </span>
-              <span className="rounded-full border border-white/[0.08] bg-white/[0.03] px-2.5 py-1 text-[10px] uppercase tracking-[0.16em] text-slate-400">
-                Registry v{version}
-              </span>
+      {/* Tab navigation */}
+      <div className="flex gap-1 rounded-[16px] border border-white/[0.07] bg-white/[0.025] p-1">
+        <button
+          onClick={() => setActiveTab('installed')}
+          className={`flex flex-1 items-center justify-center gap-2 rounded-[12px] py-2.5 text-sm font-medium transition-all ${
+            activeTab === 'installed'
+              ? 'bg-white/[0.08] text-white shadow-sm'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <Sparkles size={14} />
+          已安装
+        </button>
+        <button
+          onClick={() => setActiveTab('market')}
+          className={`flex flex-1 items-center justify-center gap-2 rounded-[12px] py-2.5 text-sm font-medium transition-all ${
+            activeTab === 'market'
+              ? 'bg-white/[0.08] text-white shadow-sm'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <Store size={14} />
+          发现市场
+        </button>
+      </div>
+
+      {activeTab === 'market' && <SkillMarketView />}
+
+      {activeTab === 'installed' && (
+        <>
+        <section className="panel-surface-strong rounded-[28px] border border-white/[0.08] px-6 py-5">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="instrument-tag rounded-full px-2.5 py-1 text-[10px] uppercase tracking-[0.22em]">
+                  Skills
+                </span>
+                <span className="rounded-full border border-white/[0.08] bg-white/[0.03] px-2.5 py-1 text-[10px] uppercase tracking-[0.16em] text-slate-400">
+                  Registry v{version}
+                </span>
+              </div>
+              <h2 className="mt-2 text-2xl font-semibold text-white" style={{ fontFamily: 'var(--font-display)' }}>
+                Skill 插件库
+              </h2>
+              <p className="mt-2 max-w-3xl text-sm leading-7 text-slate-400">
+                统一管理 prompt-only skills 与可执行 skill 的启用、信任和 gating 状态。技能热更新只会影响新会话、新任务和新的 pipeline 运行。
+              </p>
             </div>
-            <h2 className="mt-2 text-2xl font-semibold text-white" style={{ fontFamily: 'var(--font-display)' }}>
-              Skill 插件库
-            </h2>
-            <p className="mt-2 max-w-3xl text-sm leading-7 text-slate-400">
-              统一管理 prompt-only skills 与可执行 skill 的启用、信任和 gating 状态。技能热更新只会影响新会话、新任务和新的 pipeline 运行。
-            </p>
+
+            <button
+              onClick={() => void loadSkills()}
+              className="interactive-lift inline-flex items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.03] px-4 py-2 text-sm text-slate-300 hover:border-white/[0.12] hover:bg-white/[0.05] hover:text-white"
+            >
+              <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
+              刷新
+            </button>
           </div>
 
-          <button
-            onClick={() => void loadSkills()}
-            className="interactive-lift inline-flex items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.03] px-4 py-2 text-sm text-slate-300 hover:border-white/[0.12] hover:bg-white/[0.05] hover:text-white"
-          >
-            <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
-            刷新
-          </button>
-        </div>
-
-        <div className="mt-5 grid gap-3 md:grid-cols-4">
-          {[
-            { label: '总数', value: stats.total },
-            { label: '已启用', value: stats.enabled },
-            { label: '可生效', value: stats.eligible },
-            { label: '已信任', value: stats.trusted },
-          ].map((item) => (
-            <div
-              key={item.label}
-              className="soft-ring rounded-[22px] border border-white/[0.06] bg-[linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0.015))] px-4 py-4"
-            >
-              <p className="text-[11px] uppercase tracking-[0.24em] text-slate-500">{item.label}</p>
-              <p className="mt-3 text-[30px] font-semibold leading-none text-white">{item.value}</p>
-            </div>
-          ))}
-        </div>
-      </section>
+          <div className="mt-5 grid gap-3 md:grid-cols-4">
+            {[
+              { label: '总数', value: stats.total },
+              { label: '已启用', value: stats.enabled },
+              { label: '可生效', value: stats.eligible },
+              { label: '已信任', value: stats.trusted },
+            ].map((item) => (
+              <div
+                key={item.label}
+                className="soft-ring rounded-[22px] border border-white/[0.06] bg-[linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0.015))] px-4 py-4"
+              >
+                <p className="text-[11px] uppercase tracking-[0.24em] text-slate-500">{item.label}</p>
+                <p className="mt-3 text-[30px] font-semibold leading-none text-white">{item.value}</p>
+              </div>
+            ))}
+          </div>
+        </section>
 
       {error && (
         <div className="rounded-[22px] border border-rose-400/16 bg-rose-400/[0.08] px-5 py-4 text-sm text-rose-200">
@@ -234,6 +268,8 @@ export function SkillsPanel() {
           </motion.section>
         ))}
       </AnimatePresence>
+        </>
+      )}
     </div>
   )
 }

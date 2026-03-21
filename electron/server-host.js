@@ -42,6 +42,15 @@ function getNodeExecutable() {
   return process.platform === 'win32' ? 'node.exe' : 'node'
 }
 
+function resolveServerWorkingDirectory() {
+  const packagedServerDir = path.join(process.resourcesPath, 'server')
+  if (fs.existsSync(packagedServerDir)) {
+    return packagedServerDir
+  }
+
+  return path.join(__dirname, '..', 'server')
+}
+
 async function stopExternalServerProcess() {
   if (!_serverProcess) {
     _serverPort = null
@@ -73,10 +82,11 @@ async function stopExternalServerProcess() {
 
 async function startExternalLocalServer(entryPath, dbPath) {
   const nodeExecutable = getNodeExecutable()
+  const serverWorkingDirectory = resolveServerWorkingDirectory()
 
   return new Promise((resolve, reject) => {
     const child = spawn(nodeExecutable, [entryPath], {
-      cwd: path.join(__dirname, '..', 'server'),
+      cwd: serverWorkingDirectory,
       env: {
         ...process.env,
         APP_DB_PATH: dbPath || process.env['APP_DB_PATH'],
@@ -216,8 +226,11 @@ async function startLocalServer(dbPath) {
 
   const entryPath = resolveServerEntry()
   const { app } = require('electron')
+  const packagedServerDir = path.join(process.resourcesPath, 'server')
   const useExternalServer =
-    process.env['ELECTRON_EXTERNAL_SERVER'] === '1' || !app.isPackaged
+    process.env['ELECTRON_EXTERNAL_SERVER'] === '1' ||
+    !app.isPackaged ||
+    fs.existsSync(packagedServerDir)
 
   if (!fs.existsSync(entryPath)) {
     console.warn(`[server-host] entry not found: ${entryPath}`)

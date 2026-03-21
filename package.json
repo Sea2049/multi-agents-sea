@@ -1,6 +1,6 @@
 {
   "name": "agency-agents-desktop",
-  "version": "1.0.0",
+  "version": "1.0.3",
   "description": "Premium desktop command center for exploring and orchestrating Agency Agents.",
   "author": "BOB",
   "license": "MIT",
@@ -64,6 +64,24 @@
       "output": "release",
       "buildResources": "buildResources"
     },
+    "extraResources": [
+      {
+        "from": "server/package.json",
+        "to": "server/package.json"
+      },
+      {
+        "from": "server/src/storage/schema.sql",
+        "to": "server/src/storage/schema.sql"
+      },
+      {
+        "from": "server/dist",
+        "to": "server/dist"
+      },
+      {
+        "from": "server/node_modules",
+        "to": "server/node_modules"
+      }
+    ],
     "icon": "buildResources/icon.ico",
     "win": {
       "signAndEditExecutable": false,

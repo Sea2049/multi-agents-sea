@@ -1,6 +1,10 @@
 import { embedQueryText } from '../embedding/index.js'
-import { hasIndexedMemoryEmbeddings, normalizeFtsQuery, searchMemoriesFts, searchMemoriesSemantic } from './store.js'
+import { hasIndexedMemoryEmbeddings, normalizeFtsQuery, searchMemoriesFts, searchMemoriesSemantic, getPinnedMemories } from './store.js'
 import type { Memory, MemorySearchMatch } from './store.js'
+import { findEntitiesByKeyword, traverseGraph } from './entity-store.js'
+import type { Entity } from './entity-store.js'
+
+export { getPinnedMemories } from './store.js'
 
 export interface RetrievalOptions {
   query: string
@@ -68,37 +72,95 @@ function mergeMatches(lists: MemorySearchMatch[][], limit: number): Memory[] {
     .map((entry) => entry.memory)
 }
 
-function buildInjectedContext(memories: Memory[], maxChars: number): string {
-  if (memories.length === 0) {
-    return ''
-  }
+async function retrieveGraphContext(query: string): Promise<string> {
+  const matchedEntities = findEntitiesByKeyword(query, 5)
+  if (matchedEntities.length === 0) return ''
 
-  const lines: string[] = ['## Relevant Prior Knowledge', '']
-  let totalChars = 0
-
-  for (const memory of memories) {
-    const entry = `- [${memory.category}] ${memory.content}`
-    if (totalChars + entry.length > maxChars) {
-      break
+  const allRelations: Array<{ startEntity: Entity; entity: Entity; relationType: string; direction: string }> = []
+  for (const entity of matchedEntities.slice(0, 3)) {
+    const neighbors = traverseGraph(entity.id, 2)
+    for (const neighbor of neighbors) {
+      allRelations.push({ startEntity: entity, ...neighbor })
     }
-
-    lines.push(entry)
-    totalChars += entry.length
   }
 
-  if (lines.length === 2) {
-    return ''
+  const lines: string[] = []
+  const seen = new Set<string>()
+  for (const { startEntity, entity, relationType, direction } of allRelations) {
+    const triple = direction === 'out'
+      ? `${startEntity.name} -[${relationType}]-> ${entity.name}`
+      : `${entity.name} -[${relationType}]-> ${startEntity.name}`
+    if (!seen.has(triple)) {
+      seen.add(triple)
+      lines.push(`- ${triple}`)
+    }
   }
 
-  lines.push('')
-  return lines.join('\n')
+  return lines.length > 0
+    ? `## Related Entities & Relations\n\n${lines.join('\n')}`
+    : ''
+}
+
+function buildInjectedContext(
+  pinnedMemories: Memory[],
+  graphContext: string,
+  dynamicMemories: Memory[],
+  maxChars: number,
+): string {
+  let totalChars = 0
+  const parts: string[] = []
+
+  if (pinnedMemories.length > 0) {
+    const lines: string[] = ['## Pinned Knowledge (Always Active)', '']
+    for (const memory of pinnedMemories) {
+      const entry = `- [pinned/${memory.category}] ${memory.content}`
+      if (totalChars + entry.length > maxChars) break
+      lines.push(entry)
+      totalChars += entry.length
+    }
+    if (lines.length > 2) {
+      lines.push('')
+      parts.push(lines.join('\n'))
+    }
+  }
+
+  if (graphContext) {
+    if (totalChars + graphContext.length <= maxChars) {
+      parts.push(graphContext + '\n')
+      totalChars += graphContext.length
+    }
+  }
+
+  if (dynamicMemories.length > 0) {
+    const lines: string[] = ['## Relevant Prior Knowledge', '']
+    for (const memory of dynamicMemories) {
+      const entry = `- [${memory.category}] ${memory.content}`
+      if (totalChars + entry.length > maxChars) break
+      lines.push(entry)
+      totalChars += entry.length
+    }
+    if (lines.length > 2) {
+      lines.push('')
+      parts.push(lines.join('\n'))
+    }
+  }
+
+  return parts.join('\n')
 }
 
 export async function retrieveRelevantMemories(options: RetrievalOptions): Promise<RetrievalResult> {
   const { query, limit = 5, maxChars = 2000 } = options
 
+  const pinnedMemories = getPinnedMemories()
+
   if (!query.trim()) {
-    return { memories: [], injectedContext: '' }
+    if (pinnedMemories.length === 0) {
+      return { memories: [], injectedContext: '' }
+    }
+    return {
+      memories: pinnedMemories,
+      injectedContext: buildInjectedContext(pinnedMemories, '', [], maxChars),
+    }
   }
 
   const lexicalLimit = Math.max(limit * 2, limit)
@@ -136,13 +198,23 @@ export async function retrieveRelevantMemories(options: RetrievalOptions): Promi
     }
   }
 
-  const memories = mergeMatches([ftsMatches, semanticMatches], limit)
-  if (memories.length === 0) {
+  let graphContext = ''
+  try {
+    graphContext = await retrieveGraphContext(query)
+  } catch {
+    graphContext = ''
+  }
+
+  const pinnedIds = new Set(pinnedMemories.map(m => m.id))
+  const allDynamic = mergeMatches([ftsMatches, semanticMatches], limit)
+  const dynamicMemories = allDynamic.filter(m => !pinnedIds.has(m.id))
+
+  if (dynamicMemories.length === 0 && pinnedMemories.length === 0 && !graphContext) {
     return { memories: [], injectedContext: '' }
   }
 
   return {
-    memories,
-    injectedContext: buildInjectedContext(memories, maxChars),
+    memories: [...pinnedMemories, ...dynamicMemories],
+    injectedContext: buildInjectedContext(pinnedMemories, graphContext, dynamicMemories, maxChars),
   }
 }

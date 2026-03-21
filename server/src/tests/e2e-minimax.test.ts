@@ -6,7 +6,7 @@
  *   npx vitest run src/tests/e2e-minimax.test.ts --reporter=verbose
  */
 
-import { describe, it, expect } from 'vitest'
+import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 import { MiniMaxProvider, MINIMAX_DEFAULT_MODEL_ID } from '../providers/minimax.js'
 import { getProviderFromEnv } from '../providers/index.js'
 import { createPlan } from '../orchestrator/planner.js'
@@ -14,6 +14,7 @@ import { validatePlan } from '../orchestrator/plan-validator.js'
 import { executePlan } from '../orchestrator/scheduler.js'
 import { aggregateResults } from '../orchestrator/aggregator.js'
 import type { TaskExecutionEvent } from '../orchestrator/types.js'
+import { closeDb, initDb } from '../storage/db.js'
 
 const API_KEY = process.env['PROVIDER_MINIMAX_KEY']
 const SKIP = !API_KEY || API_KEY.length < 10
@@ -117,6 +118,15 @@ describe.skipIf(SKIP)('MiniMax — Planner 真实编排', () => {
 
 describe.skipIf(SKIP)('MiniMax — Scheduler 全链路执行', () => {
   const MODEL = MINIMAX_DEFAULT_MODEL_ID
+
+  beforeEach(() => {
+    closeDb()
+    initDb(':memory:')
+  })
+
+  afterAll(() => {
+    closeDb()
+  })
 
   const teamMembers = [
     { agentId: 'researcher', name: 'Researcher', description: 'Searches and gathers information', division: 'Research' },
@@ -255,6 +265,15 @@ describe.skipIf(SKIP)('MiniMax — Scheduler 全链路执行', () => {
 
 describe.skipIf(SKIP)('MiniMax — 完整 Planner→Scheduler→Aggregator 一气呵成', () => {
   const MODEL = MINIMAX_DEFAULT_MODEL_ID
+
+  beforeEach(() => {
+    closeDb()
+    initDb(':memory:')
+  })
+
+  afterAll(() => {
+    closeDb()
+  })
 
   it('从目标到最终报告，全程无人工干预', async () => {
     const provider = new MiniMaxProvider(API_KEY!)

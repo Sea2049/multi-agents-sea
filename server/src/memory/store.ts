@@ -496,6 +496,68 @@ export function getMemoryById(id: string): Memory | undefined {
   return row ? rowToMemory(row) : undefined
 }
 
+export function getPinnedMemories(limit = 20): Memory[] {
+  const db = getDb()
+  const rows = db
+    .prepare('SELECT * FROM memories WHERE is_pinned = 1 ORDER BY pinned_at DESC LIMIT ?')
+    .all(limit) as MemoryRow[]
+  return rows.map(rowToMemory)
+}
+
+export function updateMemoryContent(id: string, content: string): Memory | undefined {
+  const db = getDb()
+
+  const existingRow = db.prepare('SELECT rowid, * FROM memories WHERE id = ?').get(id) as
+    | (MemoryRow & { rowid: number })
+    | undefined
+  if (!existingRow) return undefined
+
+  db.transaction(() => {
+    db.prepare(`
+      INSERT INTO memories_fts(memories_fts, rowid, content, agent_id, task_id, category)
+      VALUES ('delete', ?, ?, ?, ?, ?)
+    `).run(existingRow.rowid, existingRow.content, existingRow.agent_id, existingRow.task_id, existingRow.category)
+
+    db.prepare(`
+      UPDATE memories
+      SET content = ?,
+          embedding_status = 'pending',
+          embedding_model = NULL,
+          embedded_at = NULL,
+          embedding_error = NULL
+      WHERE id = ?
+    `).run(content, id)
+
+    db.prepare(`
+      INSERT INTO memories_fts(rowid, content, agent_id, task_id, category)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(existingRow.rowid, content, existingRow.agent_id, existingRow.task_id, existingRow.category)
+  })()
+
+  enqueueMemoryIndexing(id)
+  return getMemoryById(id)
+}
+
+export function mergeMemories(sourceIds: string[], mergedContent: string): Memory | undefined {
+  const sources = sourceIds.map(id => getMemoryById(id)).filter((m): m is Memory => m !== undefined)
+  if (sources.length === 0) return undefined
+
+  const first = sources[0]!
+  const db = getDb()
+
+  return db.transaction((): Memory => {
+    const newMemory = saveMemory({
+      content: mergedContent,
+      source: 'manual',
+      category: first.category,
+      agentId: first.agentId,
+      taskId: first.taskId,
+    })
+    bulkDeleteMemories(sourceIds)
+    return newMemory
+  })()
+}
+
 export async function flushMemoryIndexingQueue(): Promise<void> {
   await indexingQueue.catch(() => undefined)
 }

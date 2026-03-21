@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { FastifyInstance } from 'fastify'
 import { getDb } from '../storage/db.js'
 import { runAgentStream } from '../runtime/agent-runner.js'
-import { getProviderFromEnv, isProviderName, listProviderNames } from '../providers/index.js'
+import { getRuntimeProviderFromEnv, isProviderName, listProviderNames } from '../providers/index.js'
 import type { ProviderName } from '../providers/index.js'
 import { createRegistrySnapshot } from '../runtime/registry-snapshot-builder.js'
 import { parseRegistrySnapshot, serializeRegistrySnapshot } from '../runtime/registry-snapshot.js'
@@ -149,7 +149,7 @@ export async function chatRoutes(app: FastifyInstance): Promise<void> {
       }
 
       try {
-        const provider = getProviderFromEnv(meta.provider)
+        const provider = getRuntimeProviderFromEnv(meta.provider)
 
         for await (const chunk of runAgentStream({
           agentId: session.agent_id,

@@ -32,6 +32,8 @@ export interface ProviderConfig {
   iconKey: string;
   configured: boolean;
   hasKey: boolean;
+  priority: number;
+  preferredForTasks: boolean;
   defaultModel?: string;
   settingsSchema: ProviderFieldSchema[];
 }
@@ -57,6 +59,8 @@ interface ProvidersResponse {
     kind: 'cloud' | 'local';
     iconKey: string;
     configured: boolean;
+      priority: number;
+      preferredForTasks: boolean;
     defaultModel: string | null;
     settingsSchema: ProviderFieldSchema[];
   }>;
@@ -227,7 +231,7 @@ export interface SkillRecord {
   name: string;
   description: string;
   version?: string | null;
-  source: 'workspace' | 'user' | 'bundled';
+  source: 'workspace' | 'user' | 'remote' | 'bundled';
   mode: 'prompt-only' | 'tool-contributor';
   homepage?: string | null;
   enabled: boolean;
@@ -236,11 +240,48 @@ export interface SkillRecord {
   disabledReasons: string[];
 }
 
+export interface RemoteSkillRecord {
+  id: string;
+  url: string;
+  sha256: string;
+  name: string;
+  installedAt: number;
+  updatedAt: number;
+}
+
+export interface RemoteSkillIndexEntry {
+  id: string;
+  name: string;
+  description: string;
+  author: string;
+  url: string;
+  tags: string[];
+  version?: string;
+}
+
+export interface RemoteSkillInstallResult {
+  skillId: string;
+  name: string;
+  installedAt: number;
+}
+
+export interface RemoteSkillUpdateCheck {
+  id: string;
+  name: string;
+  hasUpdate: boolean;
+  remoteHash?: string;
+}
+
 async function getBaseUrl(): Promise<string> {
   if (typeof window !== 'undefined') {
     const w = window as unknown as { api?: { getServerBaseUrl?: () => Promise<string> } };
     if (w.api?.getServerBaseUrl) {
-      return w.api.getServerBaseUrl();
+      const baseUrl = await w.api.getServerBaseUrl();
+      if (typeof baseUrl === 'string' && baseUrl.trim() !== '') {
+        return baseUrl;
+      }
+
+      throw new Error('桌面端本地服务未启动，请重启应用；若仍失败，请重新打包安装当前版本。');
     }
   }
   return 'http://127.0.0.1:3000';
@@ -281,23 +322,23 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
 export const apiClient = {
   async createSession(agentId: string, provider: string, model: string): Promise<Session> {
-    return request<Session>('/sessions', {
+    return request<Session>('/api/sessions', {
       method: 'POST',
       body: JSON.stringify({ agentId, provider, model }),
     });
   },
 
   async getSession(sessionId: string): Promise<SessionWithMessages> {
-    return request<SessionWithMessages>(`/sessions/${sessionId}`);
+    return request<SessionWithMessages>(`/api/sessions/${sessionId}`);
   },
 
   async deleteSession(sessionId: string): Promise<void> {
-    await request<unknown>(`/sessions/${sessionId}`, { method: 'DELETE' });
+    await request<unknown>(`/api/sessions/${sessionId}`, { method: 'DELETE' });
   },
 
   async *chatStream(sessionId: string, message: string): AsyncIterable<ChatChunk> {
     const base = await getBaseUrl();
-    const url = `${base}/sessions/${sessionId}/chat`;
+    const url = `${base}/api/sessions/${sessionId}/chat`;
 
     const res = await fetch(url, {
       method: 'POST',
@@ -366,6 +407,8 @@ export const apiClient = {
       iconKey: provider.iconKey,
       configured: provider.configured,
       hasKey: provider.configured,
+      priority: provider.priority ?? 0,
+      preferredForTasks: provider.preferredForTasks ?? false,
       defaultModel: provider.defaultModel ?? undefined,
       settingsSchema: provider.settingsSchema,
     }));
@@ -389,6 +432,12 @@ export const apiClient = {
     await request<unknown>(`/api/settings/providers/${encodeURIComponent(provider)}/model`, {
       method: 'POST',
       body: JSON.stringify({ model }),
+    });
+  },
+
+  async preferProvider(provider: string): Promise<void> {
+    await request<unknown>(`/api/settings/providers/${encodeURIComponent(provider)}/prefer`, {
+      method: 'POST',
     });
   },
 
@@ -435,6 +484,20 @@ export const apiClient = {
         body: JSON.stringify(params),
       })
     },
+
+    update(id: string, body: { content: string }): Promise<{ memory: MemoryRecord }> {
+      return request<{ memory: MemoryRecord }>(`/api/memories/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      })
+    },
+
+    merge(body: { sourceIds: string[]; mergedContent: string }): Promise<{ memory: MemoryRecord }> {
+      return request<{ memory: MemoryRecord }>('/api/memories/merge', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      })
+    },
   },
 
   // ─── Skills ────────────────────────────────────────────────────────────────
@@ -466,6 +529,40 @@ export const apiClient = {
       return request<{ ok: boolean; skillId: string; trusted: boolean }>(`/api/skills/${encodeURIComponent(id)}/untrust`, {
         method: 'POST',
       })
+    },
+
+    getIndex(): Promise<RemoteSkillIndexEntry[]> {
+      return request<RemoteSkillIndexEntry[]>('/api/skills/index')
+    },
+
+    listRemote(): Promise<RemoteSkillRecord[]> {
+      return request<RemoteSkillRecord[]>('/api/skills/remote')
+    },
+
+    installRemote(url: string): Promise<RemoteSkillInstallResult> {
+      return request<RemoteSkillInstallResult>('/api/skills/remote/install', {
+        method: 'POST',
+        body: JSON.stringify({ url }),
+      })
+    },
+
+    updateRemote(id: string): Promise<RemoteSkillInstallResult> {
+      return request<RemoteSkillInstallResult>(`/api/skills/remote/${encodeURIComponent(id)}/update`, {
+        method: 'POST',
+      })
+    },
+
+    async uninstallRemote(id: string): Promise<void> {
+      const base = await getBaseUrl();
+      const res = await fetch(`${base}/api/skills/remote/${encodeURIComponent(id)}`, { method: 'DELETE' })
+      if (!res.ok && res.status !== 204) {
+        const text = await res.text().catch(() => res.statusText)
+        throw new Error(`HTTP ${res.status}: ${text}`)
+      }
+    },
+
+    checkUpdates(): Promise<RemoteSkillUpdateCheck[]> {
+      return request<RemoteSkillUpdateCheck[]>('/api/skills/remote/check-updates')
     },
   },
 
