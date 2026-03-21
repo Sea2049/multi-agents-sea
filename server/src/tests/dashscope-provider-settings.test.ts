@@ -16,8 +16,8 @@ describe('DashScope Provider Settings', () => {
     await stopServer()
     closeDb()
 
-    tempDbDir = mkdtempSync(join(tmpdir(), 'agency-agents-dashscope-settings-'))
-    process.env['APP_DB_PATH'] = join(tempDbDir, 'agency-agents.db')
+    tempDbDir = mkdtempSync(join(tmpdir(), 'agent-sea-dashscope-settings-'))
+    process.env['APP_DB_PATH'] = join(tempDbDir, 'agent-sea.db')
     process.env['PROVIDER_DASHSCOPE_KEY'] = 'dashscope-test-key'
     delete process.env['PROVIDER_DASHSCOPE_URL']
   })

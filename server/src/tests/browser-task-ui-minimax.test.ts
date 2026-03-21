@@ -92,8 +92,8 @@ describe.skipIf(SKIP)('Browser Task Flow — MiniMax 真实前端交互', () => 
     await stopServer()
     closeDb()
 
-    tempDbDir = mkdtempSync(join(tmpdir(), 'agency-agents-ui-'))
-    process.env['APP_DB_PATH'] = join(tempDbDir, 'agency-agents.db')
+    tempDbDir = mkdtempSync(join(tmpdir(), 'agent-sea-ui-'))
+    process.env['APP_DB_PATH'] = join(tempDbDir, 'agent-sea.db')
     setWorkspaceRoot(SERVER_ROOT)
   })
 

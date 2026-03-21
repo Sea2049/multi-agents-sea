@@ -44,8 +44,8 @@ describe.skipIf(SKIP)('DashScope runtime fallback', () => {
     closeDb()
     clearMockWindow()
 
-    tempDbDir = mkdtempSync(join(tmpdir(), 'agency-agents-dashscope-fallback-'))
-    process.env['APP_DB_PATH'] = join(tempDbDir, 'agency-agents.db')
+    tempDbDir = mkdtempSync(join(tmpdir(), 'agent-sea-dashscope-fallback-'))
+    process.env['APP_DB_PATH'] = join(tempDbDir, 'agent-sea.db')
     process.env['PROVIDER_MINIMAX_KEY'] = 'force-invalid-primary-key'
   })
 

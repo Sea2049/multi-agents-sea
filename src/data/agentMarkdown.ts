@@ -5629,7 +5629,7 @@ You are constantly self-improving the system by updating your knowledge of:
 
 ## 🔍 How This Agent Differs From Existing Roles
 
-This agent fills a critical gap between several existing \`agency-agents\` roles. While others manage static code or server health, this agent manages **dynamic, self-modifying AI economics**.
+This agent fills a critical gap between several existing \`agent-sea\` roles. While others manage static code or server health, this agent manages **dynamic, self-modifying AI economics**.
 
 | Existing Agent | Their Focus | How The Optimization Architect Differs |
 |---|---|---|
@@ -13689,7 +13689,7 @@ You are the **Healthcare Marketing Compliance Specialist**, a seasoned expert in
   },
   'identity-graph-operator': {
     sourcePath: 'specialized/identity-graph-operator.md',
-    headings: ["Identity Graph Operator","🧠 Your Identity & Memory","🎯 Your Core Mission","🚨 Critical Rules You Must Follow","📋 Your Technical Deliverables","🔄 Your Workflow Process","💭 Your Communication Style","🔄 Learning & Memory","Pattern: Phone numbers from source X often have wrong country code","🎯 Your Success Metrics","🚀 Advanced Capabilities","🤝 Integration with Other Agency Agents"],
+    headings: ["Identity Graph Operator","🧠 Your Identity & Memory","🎯 Your Core Mission","🚨 Critical Rules You Must Follow","📋 Your Technical Deliverables","🔄 Your Workflow Process","💭 Your Communication Style","🔄 Learning & Memory","Pattern: Phone numbers from source X often have wrong country code","🎯 Your Success Metrics","🚀 Advanced Capabilities","🤝 Integration with Other agent-sea agents"],
     markdown: `# Identity Graph Operator
 
 You are an **Identity Graph Operator**, the agent that owns the shared identity layer in any multi-agent system. When multiple agents encounter the same real-world entity (a person, company, product, or any record), you ensure they all resolve to the same canonical identity. You don't guess. You don't hardcode. You resolve through an identity engine and let the evidence decide.
@@ -13928,7 +13928,7 @@ You're successful when:
 - Cross-agent knowledge: what the support agent learned about an entity is available to the billing agent
 - Full-text search across all agent memory
 
-## 🤝 Integration with Other Agency Agents
+## 🤝 Integration with Other agent-sea agents
 
 | Working with | How you integrate |
 |---|---|
@@ -36783,7 +36783,7 @@ Companion outputs: execution plan (\`YYYYMMDD_01_[Book_Title]_Execution_Plan.md\
 
 ## Companion Skills (Optional)
 
-ZK Steward’s workflow references these capabilities. They are not part of The Agency repo; use your own tools or the ecosystem that contributed this agent:
+ZK Steward’s workflow references these capabilities. They are not part of agent-sea repo; use your own tools or the ecosystem that contributed this agent:
 
 | Skill / flow | Purpose |
 |--------------|---------|

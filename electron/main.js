@@ -3,7 +3,7 @@ const path = require('path')
 const fs = require('fs')
 const { startLocalServer, stopLocalServer, getServerPort } = require('./server-host')
 
-const APP_TITLE = 'Agency Agents Desktop'
+const APP_TITLE = 'agent-sea'
 const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL || 'http://127.0.0.1:5173'
 const PROD_INDEX_PATH = path.join(__dirname, '../dist/index.html')
 const SAFE_EXTERNAL_PROTOCOLS = new Set(['https:', 'mailto:'])
@@ -114,7 +114,7 @@ function applyStoredSecretsToEnv() {
 }
 
 function getLocalDbPath() {
-  return path.join(app.getPath('userData'), 'agency-agents.db')
+  return path.join(app.getPath('userData'), 'agent-sea.db')
 }
 
 async function reloadLocalServer() {
@@ -304,7 +304,7 @@ if (!gotSingleInstanceLock) {
 
   app.whenReady().then(async () => {
     if (process.platform === 'win32') {
-      app.setAppUserModelId('com.agencyagents.desktop')
+      app.setAppUserModelId('com.agentsea.desktop')
     }
 
     const userDataOverride = process.env.ELECTRON_USER_DATA_DIR

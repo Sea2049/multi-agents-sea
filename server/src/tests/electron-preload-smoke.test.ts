@@ -145,7 +145,7 @@ describe('Electron Preload Smoke', () => {
       tempAppDataDir = null
     }
 
-    tempAppDataDir = mkdtempSync(join(tmpdir(), 'agency-agents-electron-'))
+    tempAppDataDir = mkdtempSync(join(tmpdir(), 'agent-sea-electron-'))
   })
 
   afterAll(async () => {

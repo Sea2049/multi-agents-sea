@@ -216,7 +216,7 @@ describe.skipIf(SKIP)('Electron Provider Secrets Bridge', () => {
       tempAppDataDir = null
     }
 
-    tempAppDataDir = mkdtempSync(join(tmpdir(), 'agency-agents-electron-secrets-'))
+    tempAppDataDir = mkdtempSync(join(tmpdir(), 'agent-sea-electron-secrets-'))
   frontendPort = 4800 + Math.floor(Math.random() * 200)
   })
 

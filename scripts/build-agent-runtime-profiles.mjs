@@ -10,6 +10,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { normalizeImportedBranding } from './normalize-imported-branding.mjs'
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const agentsRoot = path.join(rootDir, 'temp-agency-agents')
@@ -475,8 +476,10 @@ async function main() {
       }
     }
 
+    const normalizedBody = normalizeImportedBranding(body)
+
     const { systemPrompt, stylePrompt, outputContract, referenceSections } =
-      extractProfileParts(body)
+      extractProfileParts(normalizedBody)
 
     // 计算 token 预算
     const systemTokens = estimateTokens(systemPrompt) + estimateTokens(stylePrompt)

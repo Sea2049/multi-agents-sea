@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { normalizeImportedBranding } from './normalize-imported-branding.mjs';
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const agentsRoot = path.join(rootDir, 'temp-agency-agents');
@@ -74,11 +75,13 @@ async function main() {
       continue;
     }
 
+    const normalizedBody = normalizeImportedBranding(body);
+
     records.push({
       id,
       sourcePath: relativePath,
-      headings: extractHeadings(body),
-      markdown: body,
+      headings: extractHeadings(normalizedBody),
+      markdown: normalizedBody,
     });
   }
 

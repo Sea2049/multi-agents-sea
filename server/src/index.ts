@@ -6,7 +6,7 @@ import { initDb } from './storage/db.js'
 let stopFn: (() => Promise<void>) | null = null
 
 export async function startServer(port = 0): Promise<{ port: number; address: string }> {
-  const dbPath = process.env['APP_DB_PATH']?.trim() || join(process.cwd(), 'agency-agents.db')
+  const dbPath = process.env['APP_DB_PATH']?.trim() || join(process.cwd(), 'agent-sea.db')
   initDb(dbPath)
   const app = await buildApp()
 

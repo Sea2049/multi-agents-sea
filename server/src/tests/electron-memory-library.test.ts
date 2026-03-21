@@ -177,7 +177,7 @@ describe('Electron Memory Library', () => {
       tempAppDataDir = null
     }
 
-    tempAppDataDir = mkdtempSync(join(tmpdir(), 'agency-agents-electron-memory-'))
+    tempAppDataDir = mkdtempSync(join(tmpdir(), 'agent-sea-electron-memory-'))
   })
 
   afterAll(async () => {

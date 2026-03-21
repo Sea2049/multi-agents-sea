@@ -1,6 +1,6 @@
 {
-  "name": "agency-agents-shared",
-  "version": "1.0.3",
+  "name": "agent-sea-shared",
+  "version": "2.2.2",
   "type": "module",
   "main": "agents/catalog.ts"
 }

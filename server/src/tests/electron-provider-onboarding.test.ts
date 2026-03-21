@@ -142,7 +142,7 @@ describe('Electron Provider Onboarding', () => {
       tempAppDataDir = null
     }
 
-    tempAppDataDir = mkdtempSync(join(tmpdir(), 'agency-agents-electron-onboarding-'))
+    tempAppDataDir = mkdtempSync(join(tmpdir(), 'agent-sea-electron-onboarding-'))
   })
 
   afterAll(async () => {

@@ -1,7 +1,7 @@
 {
-  "name": "agency-agents-desktop",
-  "version": "1.0.3",
-  "description": "Premium desktop command center for exploring and orchestrating Agency Agents.",
+  "name": "agent-sea",
+  "version": "2.2.2",
+  "description": "Desktop command center for browsing and orchestrating expert agents with agent-sea.",
   "author": "BOB",
   "license": "MIT",
   "copyright": "Copyright © 2026 BOB",
@@ -49,8 +49,8 @@
     "wait-on": "^7.2.0"
   },
   "build": {
-    "appId": "com.agencyagents.desktop",
-    "productName": "Agency Agents Desktop",
+    "appId": "com.agentsea.desktop",
+    "productName": "agent-sea",
     "asar": true,
     "npmRebuild": false,
     "electronDist": "node_modules/electron/dist",
@@ -102,12 +102,12 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": "always",
       "createStartMenuShortcut": true,
-      "shortcutName": "Agency Agents Desktop",
+      "shortcutName": "agent-sea",
       "installerIcon": "buildResources/icon.ico",
       "uninstallerIcon": "buildResources/icon.ico",
       "installerHeaderIcon": "buildResources/icon.ico",
       "installerSidebar": "buildResources/installer-sidebar.bmp",
-      "uninstallDisplayName": "Agency Agents Desktop"
+      "uninstallDisplayName": "agent-sea"
     }
   }
 }

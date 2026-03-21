@@ -262,7 +262,7 @@ function App() {
     }
 
     return {
-      eyebrow: 'Agency Command',
+        eyebrow: 'agent-sea',
       title: '桌面指挥中枢',
       subtitle: `已接入 ${totalAgents} 名 Agent，覆盖 ${populatedDivisions} 个业务部门。`,
     };
@@ -417,7 +417,7 @@ function App() {
                   className="text-[11px] uppercase tracking-[0.32em] text-cyan-100/58"
                   style={{ fontFamily: 'var(--font-display)' }}
                 >
-                  Agency Agents
+                  agent-sea
                 </p>
                 <h1
                   className="text-[22px] font-semibold tracking-[0.04em] text-white"

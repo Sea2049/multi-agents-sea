@@ -214,7 +214,7 @@ describe.skipIf(SKIP)('Electron Task Flow — MiniMax 真实前端交互', () =>
       tempAppDataDir = null
     }
 
-    tempAppDataDir = mkdtempSync(join(tmpdir(), 'agency-agents-electron-ui-'))
+    tempAppDataDir = mkdtempSync(join(tmpdir(), 'agent-sea-electron-ui-'))
   })
 
   afterAll(async () => {

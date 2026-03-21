@@ -1,8 +1,10 @@
-# Agency Agents Desktop
+# agent-sea
 
-> 一个用于浏览、搜索和编排 Agency Agents（144+ AI 专家角色）的桌面可视化应用程序
+> agent-sea：一个用于浏览、搜索和编排 144+ 个 AI 专家角色的桌面可视化应用程序
 
-**当前版本**: 1.0.3 · **文档更新**: 2026-03-21 · **[变更日志](CHANGELOG.md)**
+**当前版本**: V2.2.2 · **文档更新**: 2026-03-21 · **[变更日志](CHANGELOG.md)**
+
+> 发布提醒：本次为硬切换改名版本。Windows 会将 `agent-sea` 识别为一个新应用，且默认本地数据库文件已切换为 `agent-sea.db`；旧的 `agency-agents.db` 不会自动迁移。
 
 ## 📚 框架与文档索引
 
@@ -13,7 +15,7 @@
 
 ## 📋 项目简介
 
-Agency Agents Desktop 是一个基于 Electron 的桌面应用程序，提供了一个直观的可视化界面来管理和使用 Agency Agents 生态系统中的 144+ 个 AI 专家角色。这些角色分布在 12 个专业部门中，涵盖工程、设计、营销、产品、项目管理、测试、支持、空间计算、专业领域、游戏开发、学术等多个领域。
+agent-sea 是一个基于 Electron 的桌面应用程序，提供了一个直观的可视化界面来管理和使用上游专家角色生态中的 144+ 个 AI 专家角色。这些角色分布在 12 个专业部门中，涵盖工程、设计、营销、产品、项目管理、测试、支持、空间计算、专业领域、游戏开发、学术等多个领域。
 
 ## 🏗️ 项目架构
 
@@ -126,7 +128,7 @@ npm run electron:build:installer
 完整示例见 [.env.example](.env.example)。常用项：
 
 - `APP_PORT`: 服务器端口（默认: 3701）
-- `APP_DB_PATH`: 数据库文件路径（默认: 当前工作目录下 `agency-agents.db`）
+- `APP_DB_PATH`: 数据库文件路径（例如 `./agent-sea.db`；未设置时使用应用默认本地数据库路径）
 - `VITE_DEV_SERVER_URL` / `ELECTRON_DISABLE_DEVTOOLS`: Electron 开发行为（见 `.env.example`）
 
 ### 日志
@@ -194,7 +196,7 @@ BOB
 
 ## 🔗 相关资源
 
-- [Agency Agents 项目](https://github.com/agency-agents) - 原始 Agent 定义仓库
+- [上游 Agent 定义仓库](https://github.com/agency-agents) - 原始 Agent 定义仓库
 - [Electron 文档](https://www.electronjs.org/docs)
 - [Fastify 文档](https://www.fastify.io/docs/latest/)
 

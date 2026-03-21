@@ -1,8 +1,8 @@
-# Agency Desktop Productization Implementation Plan
+# agent-sea Productization Implementation Plan
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** 将当前 Agency Agents 桌面应用升级为更正式的未来高端桌面产品，补齐品牌化打包资源、原始 markdown 富文本详情链路，以及一轮完整的 UI/交互精修。
+**Goal:** 将当前 `agent-sea` 桌面应用升级为更正式的未来高端桌面产品，补齐品牌化打包资源、原始 markdown 富文本详情链路，以及一轮完整的 UI/交互精修。
 
 **Architecture:** 保留现有 `Vite + React + Electron` 主结构，新增一层可生成的 Agent 原文数据模块供详情页读取；品牌资源统一收敛到 `buildResources`，由 `electron-builder` 直接消费；界面层围绕“未来高端 + 多节点协同网络”风格统一重构，并保持桌面优先的信息密度与可读性。
 

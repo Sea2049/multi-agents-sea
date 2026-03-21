@@ -18,7 +18,7 @@
 - [x] 阶段 5: 交付
 
 ### 本次交付内容
-- [x] 从 agency-agents 仓库解析 149 个 Agent 并生成结构化数据
+- [x] 从上游 `agency-agents` 仓库解析 149 个 Agent 并生成结构化数据
 - [x] 搭建 Vite + React + TypeScript + Tailwind + Electron 桌面应用
 - [x] 完成 Dashboard、Division Detail、全局搜索、Team Builder 主界面
 - [x] 新增 Agent 详情侧栏

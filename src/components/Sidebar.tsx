@@ -26,7 +26,7 @@ export default function Sidebar({
       <div className="flex items-center gap-3 px-5 py-5 border-b border-gray-800">
         <span className="text-2xl leading-none">🎭</span>
         <div className="flex flex-col">
-          <span className="text-white font-bold text-base leading-tight tracking-wide">The Agency</span>
+          <span className="text-white font-bold text-base leading-tight tracking-wide">agent-sea</span>
           <span className="text-gray-500 text-xs leading-tight mt-0.5">AI Specialist Team</span>
         </div>
       </div>

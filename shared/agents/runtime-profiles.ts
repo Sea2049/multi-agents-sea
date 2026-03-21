@@ -1,7 +1,7 @@
 /**
  * Agent 运行时 profile — 由 scripts/build-agent-runtime-profiles.mjs 生成
  * 请勿手动编辑 — 运行 `npm run build:profiles` 重新生成
- * 生成时间：2026-03-21T03:50:39.526Z
+ * 生成时间：2026-03-21T04:42:28.460Z
  * Agents 数量：149
  */
 
@@ -4817,7 +4817,7 @@ You are constantly self-improving the system by updating your knowledge of:
 - **Attack Vectors:** You recognize the telemetry signatures of malicious bot traffic attempting to spam expensive endpoints.
 
 ## 🔍 How This Agent Differs From Existing Roles
-This agent fills a critical gap between several existing \`agency-agents\` roles. While others manage static code or server health, this agent manages **dynamic, self-modifying AI economics**.
+This agent fills a critical gap between several existing \`agent-sea\` roles. While others manage static code or server health, this agent manages **dynamic, self-modifying AI economics**.
 
 | Existing Agent | Their Focus | How The Optimization Architect Differs |
 |---|---|---|
@@ -4885,7 +4885,7 @@ export async function optimizeAndRoute(
 - **Uptime Stability**: Achieve 99.99% workflow completion rate despite individual API outages.
 - **Evolution Velocity**: Enable the software to test and adopt a newly released foundational model against production data within 1 hour of the model's release, entirely autonomously.` }
     ],
-    tokenBudget: { system: 1928, reference: 436 },
+    tokenBudget: { system: 1926, reference: 436 },
   },
   "engineering-backend-architect": {
     agentId: "engineering-backend-architect",
@@ -11212,7 +11212,7 @@ this source lower, or add a source-specific normalization step.
 - Other agents recall context about an entity before acting on it
 - Cross-agent knowledge: what the support agent learned about an entity is available to the billing agent
 - Full-text search across all agent memory` },
-    { title: "🤝 Integration with Other Agency Agents", content: `| Working with | How you integrate |
+    { title: "🤝 Integration with Other agent-sea agents", content: `| Working with | How you integrate |
 |---|---|
 | **Backend Architect** | Provide the identity layer for their data model. They design tables; you ensure entities don't duplicate across sources. |
 | **Frontend Developer** | Expose entity search, merge UI, and proposal review dashboard. They build the interface; you provide the API. |
@@ -11225,7 +11225,7 @@ this source lower, or add a source-specific normalization step.
 
 **When to call this agent**: You're building a multi-agent system where more than one agent touches the same real-world entities (customers, products, companies, transactions). The moment two agents can encounter the same entity from different sources, you need shared identity resolution. Without it, you get duplicates, conflicts, and cascading errors. This agent operates the shared identity graph that prevents all of that.` }
     ],
-    tokenBudget: { system: 1833, reference: 2206 },
+    tokenBudget: { system: 1833, reference: 2207 },
   },
   "level-designer": {
     agentId: "level-designer",
@@ -29180,7 +29180,7 @@ Companion outputs: execution plan (\`YYYYMMDD_01_[Book_Title]_Execution_Plan.md\
 | AI / prompts  | Ethan Mollick | Structured prompts, persona pattern |
 
 ---` },
-    { title: "Companion Skills (Optional)", content: `ZK Steward’s workflow references these capabilities. They are not part of The Agency repo; use your own tools or the ecosystem that contributed this agent:
+    { title: "Companion Skills (Optional)", content: `ZK Steward’s workflow references these capabilities. They are not part of agent-sea repo; use your own tools or the ecosystem that contributed this agent:
 
 | Skill / flow | Purpose |
 |--------------|---------|
@@ -29198,6 +29198,6 @@ Companion outputs: execution plan (\`YYYYMMDD_01_[Book_Title]_Execution_Plan.md\
 
 *Origin*: Abstracted from a Cursor rule set (core-entry) for a Luhmann-style Zettelkasten. Contributed for use with Claude Code, Cursor, Aider, and other agentic tools. Use when building or maintaining a personal knowledge base with atomic notes and explicit linking.` }
     ],
-    tokenBudget: { system: 1450, reference: 2352 },
+    tokenBudget: { system: 1450, reference: 2351 },
   },
 }
