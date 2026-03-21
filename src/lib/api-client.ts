@@ -273,6 +273,9 @@ export interface SkillMarketEntry {
   };
 }
 
+// Backward-compatible alias for previous naming.
+export type RemoteSkillIndexEntry = SkillMarketEntry;
+
 export interface SkillMarketPreview {
   provider: SkillMarketProvider;
   providerSkillId: string;
@@ -342,6 +345,8 @@ export interface LocalSkillInstallResult {
   importedAt: number;
 }
 
+export const DEFAULT_SERVER_BASE_URL = 'http://127.0.0.1:3701';
+
 async function getBaseUrl(): Promise<string> {
   if (typeof window !== 'undefined') {
     const w = window as unknown as { api?: { getServerBaseUrl?: () => Promise<string> } };
@@ -354,7 +359,7 @@ async function getBaseUrl(): Promise<string> {
       throw new Error('桌面端本地服务未启动，请重启应用；若仍失败，请重新打包安装当前版本。');
     }
   }
-  return 'http://127.0.0.1:3000';
+  return DEFAULT_SERVER_BASE_URL;
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {

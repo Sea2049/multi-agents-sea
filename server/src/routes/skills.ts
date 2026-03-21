@@ -204,6 +204,18 @@ function toSkillMarketProvider(value: string | undefined): SkillMarketProvider |
   return null
 }
 
+function isInputValidationError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false
+  return (
+    err.message.startsWith('Invalid ') ||
+    err.message.includes('missing required') ||
+    err.message.includes('cannot target localhost') ||
+    err.message.includes('must use http or https') ||
+    err.message.includes('must not include credentials') ||
+    err.message.includes('handler path')
+  )
+}
+
 export async function skillsRoutes(app: FastifyInstance): Promise<void> {
   app.get('/skills', async (_request, reply) => {
     const registry = getSkillRegistry()
@@ -362,7 +374,8 @@ export async function skillsRoutes(app: FastifyInstance): Promise<void> {
       await getSkillRegistry().reload()
       return reply.send(result)
     } catch (err) {
-      return reply.status(500).send({ error: `Install failed: ${err instanceof Error ? err.message : String(err)}` })
+      const statusCode = isInputValidationError(err) ? 400 : 500
+      return reply.status(statusCode).send({ error: `Install failed: ${err instanceof Error ? err.message : String(err)}` })
     }
   })
 
@@ -390,7 +403,8 @@ export async function skillsRoutes(app: FastifyInstance): Promise<void> {
       await getSkillRegistry().reload()
       return reply.status(204).send()
     } catch (err) {
-      return reply.status(500).send({ error: `Uninstall failed: ${err instanceof Error ? err.message : String(err)}` })
+      const statusCode = isInputValidationError(err) ? 400 : 500
+      return reply.status(statusCode).send({ error: `Uninstall failed: ${err instanceof Error ? err.message : String(err)}` })
     }
   })
 

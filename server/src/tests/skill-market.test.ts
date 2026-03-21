@@ -66,6 +66,28 @@ Remote skill test instructions.
 `
 
 const HANDLER_CONTENT = `export function execute(input) { return String(input.value ?? '') }\n`
+const TRAVERSAL_SKILL_MD = `---
+name: ../escape
+description: Invalid path traversal id
+---
+
+bad
+`
+const TRAVERSAL_HANDLER_SKILL_MD = `---
+name: test-remote-skill
+description: Invalid handler path
+metadata:
+  mode: tool-contributor
+  tools:
+    - name: test_tool
+      description: A test tool
+      handler: ../evil.mjs
+      inputSchema:
+        type: object
+---
+
+bad
+`
 
 describe('Remote skill install/uninstall cycle', () => {
   let tmpDir: string
@@ -162,6 +184,47 @@ describe('Remote skill install/uninstall cycle', () => {
     const { hasUpdate } = await checkRemoteSkillUpdate('test-remote-skill')
     // SKILL.md hasn't changed so hash should match
     expect(hasUpdate).toBe(false)
+  })
+
+  it('rejects localhost and private network remote URLs', async () => {
+    const { installRemoteSkill } = await import('../skills/remote-installer.js')
+
+    await expect(installRemoteSkill('http://127.0.0.1:8080/skills/test-remote-skill')).rejects.toThrow(
+      /private network/i,
+    )
+    await expect(installRemoteSkill('http://localhost:8080/skills/test-remote-skill')).rejects.toThrow(
+      /private network/i,
+    )
+  })
+
+  it('rejects remote SKILL.md with unsafe skill id', async () => {
+    const { installRemoteSkill } = await import('../skills/remote-installer.js')
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (String(url).endsWith('/SKILL.md')) {
+        return {
+          ok: true,
+          text: async () => TRAVERSAL_SKILL_MD,
+        }
+      }
+      return { ok: false, status: 404 }
+    }))
+
+    await expect(installRemoteSkill('https://example.com/skills/bad-skill')).rejects.toThrow(/invalid remote skill id/i)
+  })
+
+  it('rejects remote SKILL.md with unsafe handler path', async () => {
+    const { installRemoteSkill } = await import('../skills/remote-installer.js')
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (String(url).endsWith('/SKILL.md')) {
+        return {
+          ok: true,
+          text: async () => TRAVERSAL_HANDLER_SKILL_MD,
+        }
+      }
+      return { ok: false, status: 404 }
+    }))
+
+    await expect(installRemoteSkill('https://example.com/skills/bad-handler')).rejects.toThrow(/handler path/i)
   })
 })
 

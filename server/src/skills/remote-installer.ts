@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto'
 import { mkdir, writeFile, readFile, rm } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join, resolve, sep } from 'node:path'
 import { homedir } from 'node:os'
+import { isIP } from 'node:net'
 import matter from 'gray-matter'
 import { getDb } from '../storage/db.js'
 import type { RemoteSkillRecord } from './types.js'
@@ -10,8 +11,105 @@ function getRemoteSkillsDir(): string {
   return process.env['SEA_REMOTE_SKILLS_DIR'] ?? join(homedir(), '.sea', 'skills', 'remote')
 }
 
+const SAFE_SKILL_ID_PATTERN = /^[A-Za-z0-9._-]+$/
+const SAFE_HANDLER_SEGMENT_PATTERN = /^[A-Za-z0-9._-]+$/
+
+function isPrivateIpAddress(hostname: string): boolean {
+  const normalized = hostname.trim().toLowerCase()
+  if (!normalized) return true
+  if (normalized === 'localhost' || normalized.endsWith('.localhost')) return true
+
+  const ipVersion = isIP(normalized)
+  if (ipVersion === 4) {
+    const parts = normalized.split('.').map((part) => Number.parseInt(part, 10))
+    if (parts.length !== 4 || parts.some((part) => Number.isNaN(part))) return true
+    const [a, b] = parts
+    if (a === 10 || a === 127 || a === 0) return true
+    if (a === 169 && b === 254) return true
+    if (a === 172 && b >= 16 && b <= 31) return true
+    if (a === 192 && b === 168) return true
+    return false
+  }
+
+  if (ipVersion === 6) {
+    if (normalized === '::1') return true
+    if (normalized.startsWith('fc') || normalized.startsWith('fd')) return true
+    if (normalized.startsWith('fe8') || normalized.startsWith('fe9') || normalized.startsWith('fea') || normalized.startsWith('feb')) {
+      return true
+    }
+    return false
+  }
+
+  return false
+}
+
+function normalizeRemoteBaseUrl(input: string): string {
+  let parsed: URL
+  try {
+    parsed = new URL(input.trim())
+  } catch {
+    throw new Error('Invalid remote skill URL')
+  }
+
+  const protocol = parsed.protocol.toLowerCase()
+  if (protocol !== 'https:' && protocol !== 'http:') {
+    throw new Error('Remote skill URL must use http or https')
+  }
+
+  if (isPrivateIpAddress(parsed.hostname)) {
+    throw new Error('Remote skill URL cannot target localhost or private network addresses')
+  }
+
+  if (parsed.username || parsed.password) {
+    throw new Error('Remote skill URL must not include credentials')
+  }
+
+  parsed.hash = ''
+  return parsed.href.replace(/\/$/, '')
+}
+
+function normalizeSkillId(rawSkillId: string): string {
+  const skillId = rawSkillId.trim()
+  if (!skillId) {
+    throw new Error('Remote SKILL.md missing required "name" frontmatter field')
+  }
+  if (!SAFE_SKILL_ID_PATTERN.test(skillId)) {
+    throw new Error(`Invalid remote skill id "${skillId}"`)
+  }
+  return skillId
+}
+
+function normalizeToolHandler(rawHandler: string): string {
+  const normalized = rawHandler.trim().replaceAll('\\', '/')
+  if (!normalized) {
+    throw new Error('Remote tool handler path cannot be empty')
+  }
+  if (normalized.startsWith('/') || normalized.includes('//')) {
+    throw new Error(`Invalid remote tool handler path "${rawHandler}"`)
+  }
+  const segments = normalized.split('/')
+  if (
+    segments.some((segment) =>
+      segment.length === 0 || segment === '.' || segment === '..' || !SAFE_HANDLER_SEGMENT_PATTERN.test(segment),
+    )
+  ) {
+    throw new Error(`Invalid remote tool handler path "${rawHandler}"`)
+  }
+  return segments.join('/')
+}
+
+function resolveInside(baseDir: string, relativePath: string): string {
+  const normalizedBase = resolve(baseDir)
+  const resolvedPath = resolve(normalizedBase, relativePath)
+  if (resolvedPath !== normalizedBase && !resolvedPath.startsWith(`${normalizedBase}${sep}`)) {
+    throw new Error('Resolved path escapes remote skill directory')
+  }
+  return resolvedPath
+}
+
 export function getRemoteSkillDir(skillId: string): string {
-  return join(getRemoteSkillsDir(), skillId)
+  const normalizedSkillId = normalizeSkillId(skillId)
+  return resolveInside(getRemoteSkillsDir(), normalizedSkillId)
 }
 
 export interface RemoteSkillInstallResult {
@@ -53,17 +151,14 @@ function computeHash(parts: string[]): string {
 
 function parseSkillId(content: string): { id: string; name: string; tools: string[] } {
   const parsed = matter(content)
-  const name = typeof parsed.data['name'] === 'string' ? parsed.data['name'].trim() : ''
-  if (!name) {
-    throw new Error('Remote SKILL.md missing required "name" frontmatter field')
-  }
+  const name = typeof parsed.data['name'] === 'string' ? normalizeSkillId(parsed.data['name']) : ''
 
   const toolHandlers: string[] = []
   const tools = parsed.data['metadata']?.['tools']
   if (Array.isArray(tools)) {
     for (const tool of tools) {
       if (tool && typeof tool === 'object' && typeof tool['handler'] === 'string') {
-        toolHandlers.push(tool['handler'].trim())
+        toolHandlers.push(normalizeToolHandler(tool['handler']))
       }
     }
   }
@@ -72,7 +167,7 @@ function parseSkillId(content: string): { id: string; name: string; tools: strin
 }
 
 export async function installRemoteSkill(url: string): Promise<RemoteSkillInstallResult> {
-  const normalizedUrl = url.replace(/\/$/, '')
+  const normalizedUrl = normalizeRemoteBaseUrl(url)
 
   const skillMdContent = await fetchText(`${normalizedUrl}/SKILL.md`)
   const { id: skillId, name, tools: toolHandlers } = parseSkillId(skillMdContent)
@@ -87,8 +182,8 @@ export async function installRemoteSkill(url: string): Promise<RemoteSkillInstal
     try {
       const handlerContent = await fetchText(`${normalizedUrl}/${handler}`)
       contentParts.push(handlerContent)
-      const handlerPath = join(installDir, handler)
-      const handlerDir = join(handlerPath, '..')
+      const handlerPath = resolveInside(installDir, handler)
+      const handlerDir = dirname(handlerPath)
       await mkdir(handlerDir, { recursive: true })
       await writeFile(handlerPath, handlerContent, 'utf8')
     } catch (err) {
