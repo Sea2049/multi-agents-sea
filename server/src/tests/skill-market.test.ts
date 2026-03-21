@@ -5,6 +5,12 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { closeDb, initDb } from '../storage/db.js'
 
+const dnsLookupMock = vi.hoisted(() => vi.fn())
+
+vi.mock('node:dns/promises', () => ({
+  lookup: dnsLookupMock,
+}))
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function makeTmpDir(): string {
@@ -119,6 +125,14 @@ describe('Remote skill install/uninstall cycle', () => {
       }
       return { ok: false, status: 404 }
     }))
+
+    dnsLookupMock.mockImplementation(async (_hostname: string, options?: { all?: boolean }) => {
+      const address = { address: '93.184.216.34', family: 4 }
+      if (options && typeof options === 'object' && 'all' in options && options.all) {
+        return [address]
+      }
+      return address
+    })
   })
 
   afterEach(() => {
@@ -225,6 +239,23 @@ describe('Remote skill install/uninstall cycle', () => {
     }))
 
     await expect(installRemoteSkill('https://example.com/skills/bad-handler')).rejects.toThrow(/handler path/i)
+  })
+
+  it('rejects domain when DNS resolves to private IP (dns rebinding guard)', async () => {
+    const { installRemoteSkill } = await import('../skills/remote-installer.js')
+    dnsLookupMock.mockImplementation(async (hostname: string, options?: { all?: boolean }) => {
+      const address = hostname === 'rebind.example.com'
+        ? { address: '127.0.0.1', family: 4 }
+        : { address: '93.184.216.34', family: 4 }
+      if (options && typeof options === 'object' && 'all' in options && options.all) {
+        return [address]
+      }
+      return address
+    })
+
+    await expect(installRemoteSkill('https://rebind.example.com/skills/test-remote-skill')).rejects.toThrow(
+      /resolved to private|private or loopback/i,
+    )
   })
 })
 

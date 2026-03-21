@@ -210,6 +210,9 @@ function isInputValidationError(err: unknown): boolean {
     err.message.startsWith('Invalid ') ||
     err.message.includes('missing required') ||
     err.message.includes('cannot target localhost') ||
+    err.message.includes('private or loopback') ||
+    err.message.includes('resolved to private') ||
+    err.message.includes('Failed to resolve remote hostname') ||
     err.message.includes('must use http or https') ||
     err.message.includes('must not include credentials') ||
     err.message.includes('handler path')

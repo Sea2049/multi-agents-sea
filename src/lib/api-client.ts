@@ -92,6 +92,7 @@ export interface TaskPlan {
 
 export interface TaskStepRecord {
   id: string;
+  runVersion?: number;
   taskId?: string;
   agentId: string;
   status: StepStatus;
@@ -108,6 +109,7 @@ export interface TaskRecord {
   id: string;
   status: TaskStatus;
   kind?: string;
+  runVersion?: number;
   teamMembers?: Array<{ agentId: string; provider: string; model: string }>;
   objective: string;
   plan?: TaskPlan;
@@ -117,7 +119,24 @@ export interface TaskRecord {
   error?: string;
   createdAt: number;
   updatedAt: number;
+  threadMessages?: TaskThreadMessage[];
   steps?: TaskStepRecord[];
+}
+
+export interface TaskThreadMessage {
+  id: string;
+  taskId: string;
+  runVersion: number;
+  role: 'user' | 'assistant' | 'system';
+  mode: 'chat' | 'continue';
+  content: string;
+  createdAt: number;
+}
+
+export interface TaskChatChunk {
+  delta: string;
+  done: boolean;
+  error?: string;
 }
 
 export type PipelineConditionOperator = 'exists' | 'contains' | 'equals' | 'not_contains';
@@ -190,6 +209,7 @@ export interface PipelineSummary {
 export interface TaskExecutionEvent {
   type: 'task_started' | 'step_started' | 'step_waiting' | 'step_completed' | 'step_skipped' | 'step_failed' | 'task_completed' | 'task_failed' | 'tool_call_started' | 'tool_call_completed';
   taskId: string;
+  runVersion?: number;
   stepId?: string;
   agentId?: string;
   output?: string;
@@ -711,6 +731,76 @@ export const apiClient = {
 
     async delete(taskId: string): Promise<void> {
       await request<unknown>(`/api/tasks/${taskId}`, { method: 'DELETE' });
+    },
+
+    continueTask(taskId: string, message: string): Promise<{ ok: boolean; taskId: string; status: TaskStatus; runVersion: number }> {
+      return request<{ ok: boolean; taskId: string; status: TaskStatus; runVersion: number }>(
+        `/api/tasks/${encodeURIComponent(taskId)}/continue`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ message }),
+        }
+      );
+    },
+
+    async *chat(taskId: string, message: string): AsyncIterable<TaskChatChunk> {
+      const base = await getBaseUrl();
+      const url = `${base}/api/tasks/${encodeURIComponent(taskId)}/chat`;
+
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message }),
+      });
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => res.statusText);
+        yield { delta: '', done: true, error: `HTTP ${res.status}: ${text}` };
+        return;
+      }
+
+      const reader = res.body?.getReader();
+      if (!reader) {
+        yield { delta: '', done: true, error: 'No response body' };
+        return;
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() ?? '';
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed || !trimmed.startsWith('data:')) continue;
+
+            const data = trimmed.slice(5).trim();
+            if (data === '[DONE]') {
+              yield { delta: '', done: true };
+              return;
+            }
+
+            try {
+              const chunk = JSON.parse(data) as TaskChatChunk;
+              yield chunk;
+              if (chunk.done) return;
+            } catch {
+              // skip malformed SSE lines
+            }
+          }
+        }
+
+        yield { delta: '', done: true };
+      } finally {
+        reader.releaseLock();
+      }
     },
 
     approveStep(taskId: string, stepId: string): Promise<{ ok: boolean }> {

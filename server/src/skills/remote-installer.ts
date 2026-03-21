@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import * as dns from 'node:dns/promises'
 import { mkdir, writeFile, readFile, rm } from 'node:fs/promises'
 import { dirname, join, resolve, sep } from 'node:path'
 import { homedir } from 'node:os'
@@ -68,6 +69,59 @@ function normalizeRemoteBaseUrl(input: string): string {
   return parsed.href.replace(/\/$/, '')
 }
 
+async function assertHostnameResolvesPublic(hostname: string): Promise<void> {
+  if (isIP(hostname) !== 0) {
+    if (isPrivateIpAddress(hostname)) {
+      throw new Error(`Remote hostname "${hostname}" is private or loopback`)
+    }
+    return
+  }
+
+  let addresses: Array<{ address: string; family: number }>
+  try {
+    const resolved = await dns.lookup(hostname, { all: true, verbatim: true })
+    addresses = Array.isArray(resolved) ? resolved : [resolved]
+  } catch (err) {
+    throw new Error(
+      `Failed to resolve remote hostname "${hostname}": ${err instanceof Error ? err.message : String(err)}`,
+    )
+  }
+
+  if (addresses.length === 0) {
+    throw new Error(`Remote hostname "${hostname}" did not resolve to any IP addresses`)
+  }
+
+  const blockedAddress = addresses.find((item) => isPrivateIpAddress(item.address))
+  if (blockedAddress) {
+    throw new Error(
+      `Remote hostname "${hostname}" resolved to private or loopback IP "${blockedAddress.address}"`,
+    )
+  }
+}
+
+async function assertSafeFetchUrl(url: string): Promise<void> {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    throw new Error('Invalid remote fetch URL')
+  }
+
+  const protocol = parsed.protocol.toLowerCase()
+  if (protocol !== 'https:' && protocol !== 'http:') {
+    throw new Error('Remote fetch URL must use http or https')
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error('Remote fetch URL must not include credentials')
+  }
+  if (isPrivateIpAddress(parsed.hostname)) {
+    throw new Error(`Remote hostname "${parsed.hostname}" is private or loopback`)
+  }
+
+  // Re-resolve hostname on every hop to reduce DNS rebinding risk.
+  await assertHostnameResolvesPublic(parsed.hostname)
+}
+
 function normalizeSkillId(rawSkillId: string): string {
   const skillId = rawSkillId.trim()
   if (!skillId) {
@@ -131,11 +185,31 @@ async function fetchText(url: string): Promise<string> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 30_000)
   try {
-    const res = await fetch(url, { signal: controller.signal })
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status} fetching ${url}`)
+    let currentUrl = url
+    for (let redirectCount = 0; redirectCount <= 5; redirectCount += 1) {
+      await assertSafeFetchUrl(currentUrl)
+
+      const res = await fetch(currentUrl, {
+        signal: controller.signal,
+        redirect: 'manual',
+      })
+      const status = res.status
+      if (status === 301 || status === 302 || status === 303 || status === 307 || status === 308) {
+        const location = res.headers.get('location')
+        if (!location) {
+          throw new Error(`Redirect response missing location header for ${currentUrl}`)
+        }
+        currentUrl = new URL(location, currentUrl).toString()
+        continue
+      }
+
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status} fetching ${currentUrl}`)
+      }
+      return await res.text()
     }
-    return await res.text()
+
+    throw new Error(`Too many redirects fetching ${url}`)
   } finally {
     clearTimeout(timer)
   }

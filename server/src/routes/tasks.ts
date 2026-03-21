@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { FastifyInstance } from 'fastify'
 import { getDb } from '../storage/db.js'
-import { getProviderFromEnv, getRuntimeProviderFromEnv, isProviderName, type ProviderName } from '../providers/index.js'
+import { getRuntimeProviderFromEnv, isProviderName, type ProviderName } from '../providers/index.js'
 import { createRegistrySnapshot } from '../runtime/registry-snapshot-builder.js'
 import type { RegistrySnapshot } from '../runtime/registry-snapshot.js'
 import { parseRegistrySnapshot, serializeRegistrySnapshot } from '../runtime/registry-snapshot.js'
@@ -17,14 +17,25 @@ import {
   addTaskSseSubscriber,
   broadcastTaskEvent,
   clearTaskSseSubscribers,
+  cancelTaskSseCleanup,
   deleteTaskRuntime,
+  getTaskRunVersion,
   removeTaskSseSubscriber,
   persistTaskExecutionEvent,
+  scheduleTaskSseCleanup,
   toClientTaskStepId,
   updateTaskStatus,
   updateTaskStepSummary,
   upsertTaskStep,
 } from '../tasks/runtime-store.js'
+import {
+  appendTaskMessage,
+  buildContinuationContext,
+  buildTaskChatMessages,
+  buildTaskChatSystemPrompt,
+  listTaskMessages,
+  type TaskStepSnapshot,
+} from '../tasks/followup-thread.js'
 
 const MAX_PLAN_RETRIES = 2
 
@@ -43,6 +54,7 @@ interface TaskRow {
   id: string
   status: string
   kind: string
+  run_version: number | null
   team_members: string
   objective: string
   plan: string | null
@@ -58,6 +70,7 @@ interface TaskRow {
 interface TaskStepRow {
   id: string
   task_id: string
+  run_version: number | null
   agent_id: string
   status: string
   objective: string
@@ -69,16 +82,50 @@ interface TaskStepRow {
   completed_at: number | null
 }
 
+interface TaskMessageBody {
+  message: string
+}
+
+function parseTaskTeamMembers(raw: string): TaskTeamMemberInput[] {
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) {
+      return []
+    }
+    return parsed.filter((item): item is TaskTeamMemberInput => {
+      if (!item || typeof item !== 'object') return false
+      const candidate = item as Partial<TaskTeamMemberInput>
+      return typeof candidate.agentId === 'string' && typeof candidate.provider === 'string' && typeof candidate.model === 'string'
+    })
+  } catch {
+    return []
+  }
+}
+
+function toTaskStepSnapshot(step: TaskStepRow): TaskStepSnapshot {
+  return {
+    objective: step.objective,
+    status: step.status,
+    summary: step.summary,
+    result: step.result,
+    error: step.error,
+    runVersion: step.run_version,
+  }
+}
+
 /**
  * 异步执行整个编排流程（规划 -> 校验 -> 调度 -> 汇总），不阻塞 HTTP 响应
  */
 async function runOrchestration(params: {
   taskId: string
   objective: string
+  continuationContext?: string
+  runVersion?: number
   teamMembersInput: TaskTeamMemberInput[]
   snapshot: RegistrySnapshot
 }): Promise<void> {
-  const { taskId, objective, teamMembersInput, snapshot } = params
+  const { taskId, objective, continuationContext, teamMembersInput, snapshot } = params
+  const runVersion = params.runVersion ?? getTaskRunVersion(params.taskId)
 
   try {
     // 构建 planner 需要的团队信息（从 runtime-profiles 获取）
@@ -108,6 +155,7 @@ async function runOrchestration(params: {
     const plannerProvider = getRuntimeProviderFromEnv(firstMember.provider as ProviderName)
     const availableAgentIds = new Set(teamMembersInput.map((m) => m.agentId))
 
+    cancelTaskSseCleanup(taskId)
     updateTaskStatus(taskId, 'planning')
 
     // Repair loop：最多重试 MAX_PLAN_RETRIES 次
@@ -119,6 +167,7 @@ async function runOrchestration(params: {
       const rawPlan = await createPlan({
         taskId,
         objective,
+        continuationContext,
         teamMembers: plannerTeam,
         provider: plannerProvider,
         model: firstMember.model,
@@ -154,6 +203,7 @@ async function runOrchestration(params: {
         agentId: step.assignee,
         objective: step.objective,
         status: 'pending',
+        runVersion,
       })
     }
 
@@ -168,10 +218,11 @@ async function runOrchestration(params: {
       providerFactory: (providerName) => getRuntimeProviderFromEnv(providerName as ProviderName),
       snapshot,
       onEvent: (event) => {
+        const scopedEvent: TaskExecutionEvent = { ...event, runVersion }
         if (event.type !== 'task_completed' && event.type !== 'task_failed') {
-          broadcastTaskEvent(taskId, event)
+          broadcastTaskEvent(taskId, scopedEvent)
         }
-        persistTaskExecutionEvent(taskId, plan!, event)
+        persistTaskExecutionEvent(taskId, plan!, scopedEvent, runVersion)
       },
     })
 
@@ -216,6 +267,7 @@ async function runOrchestration(params: {
     const completionEvent: TaskExecutionEvent = {
       type: hasFailedStep ? 'task_failed' : 'task_completed',
       taskId,
+      runVersion,
       output: finalReport,
       timestamp: Date.now(),
     }
@@ -229,6 +281,7 @@ async function runOrchestration(params: {
     const failEvent: TaskExecutionEvent = {
       type: 'task_failed',
       taskId,
+      runVersion,
       error: errorMsg,
       output: fallbackOutput,
       timestamp: Date.now(),
@@ -236,9 +289,7 @@ async function runOrchestration(params: {
     broadcastTaskEvent(taskId, failEvent)
   } finally {
     // 清理 SSE 客户端（延迟 10s，让客户端有时间收到最终事件）
-    setTimeout(() => {
-      clearTaskSseSubscribers(taskId)
-    }, 10_000)
+    scheduleTaskSseCleanup(taskId)
   }
 }
 
@@ -268,12 +319,13 @@ export async function tasksRoutes(app: FastifyInstance): Promise<void> {
     const snapshot = createRegistrySnapshot()
 
     db.prepare(
-      `INSERT INTO tasks (id, status, kind, team_members, objective, registry_snapshot, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO tasks (id, status, kind, run_version, team_members, objective, registry_snapshot, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       taskId,
       'pending',
       'orchestration',
+      1,
       JSON.stringify(teamMembers),
       objective.trim(),
       serializeRegistrySnapshot(snapshot),
@@ -292,6 +344,7 @@ export async function tasksRoutes(app: FastifyInstance): Promise<void> {
     return reply.status(202).send({
       id: taskId,
       status: 'pending',
+      runVersion: 1,
       objective: objective.trim(),
       createdAt: now,
     })
@@ -302,7 +355,7 @@ export async function tasksRoutes(app: FastifyInstance): Promise<void> {
     const db = getDb()
     const rows = db
       .prepare<[], TaskRow>(
-        `SELECT id, status, kind, objective, plan, result, error, created_at, updated_at
+        `SELECT id, status, kind, run_version, objective, plan, result, error, created_at, updated_at
          FROM tasks
          ORDER BY created_at DESC
          LIMIT 20`,
@@ -314,6 +367,7 @@ export async function tasksRoutes(app: FastifyInstance): Promise<void> {
         id: r.id,
         status: r.status,
         kind: r.kind,
+        runVersion: r.run_version ?? 1,
         objective: r.objective,
         hasPlan: r.plan !== null,
         hasResult: r.result !== null,
@@ -336,14 +390,16 @@ export async function tasksRoutes(app: FastifyInstance): Promise<void> {
 
     const steps = db
       .prepare<[string], TaskStepRow>(
-        `SELECT * FROM task_steps WHERE task_id = ? ORDER BY started_at ASC`,
+        `SELECT * FROM task_steps WHERE task_id = ? ORDER BY run_version ASC, started_at ASC, id ASC`,
       )
       .all(id)
+    const threadMessages = listTaskMessages(db, id, 30)
 
     return reply.send({
       id: task.id,
       status: task.status,
       kind: task.kind,
+      runVersion: task.run_version ?? 1,
       objective: task.objective,
       plan: task.plan ? (JSON.parse(task.plan) as unknown) : null,
       registrySnapshot: parseRegistrySnapshot(task.registry_snapshot),
@@ -354,8 +410,10 @@ export async function tasksRoutes(app: FastifyInstance): Promise<void> {
       teamMembers: JSON.parse(task.team_members) as unknown,
       createdAt: task.created_at,
       updatedAt: task.updated_at,
+      threadMessages,
       steps: steps.map((s) => ({
         id: toClientTaskStepId(task.id, s.id),
+        runVersion: s.run_version ?? 1,
         agentId: s.agent_id,
         status: s.status,
         objective: s.objective,
@@ -369,6 +427,188 @@ export async function tasksRoutes(app: FastifyInstance): Promise<void> {
     })
   })
 
+  app.post<{ Params: { id: string }; Body: TaskMessageBody }>('/tasks/:id/chat', async (request, reply) => {
+    const { id } = request.params
+    const { message } = request.body
+    const trimmedMessage = message?.trim()
+    if (!trimmedMessage) {
+      return reply.status(400).send({ error: 'message is required and cannot be empty' })
+    }
+
+    const db = getDb()
+    const task = db.prepare<[string], TaskRow>(`SELECT * FROM tasks WHERE id = ?`).get(id)
+    if (!task) {
+      return reply.status(404).send({ error: `Task not found: ${id}` })
+    }
+
+    const teamMembers = parseTaskTeamMembers(task.team_members)
+    const firstMember = teamMembers[0]
+    if (!firstMember) {
+      return reply.status(400).send({ error: 'Task has no team members for follow-up chat' })
+    }
+
+    const steps = db
+      .prepare<[string], TaskStepRow>(
+        `SELECT * FROM task_steps WHERE task_id = ? ORDER BY run_version ASC, started_at ASC, id ASC`,
+      )
+      .all(id)
+    const runVersion = task.run_version ?? 1
+    const previousMessages = listTaskMessages(db, id, 24)
+    appendTaskMessage(db, {
+      taskId: id,
+      runVersion,
+      role: 'user',
+      mode: 'chat',
+      content: trimmedMessage,
+    })
+
+    const origin = request.headers.origin
+    const allowLocalOrigin =
+      typeof origin === 'string' && /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)
+
+    reply.raw.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+      ...(allowLocalOrigin
+        ? {
+            'Access-Control-Allow-Origin': origin,
+            Vary: 'Origin',
+          }
+        : {}),
+    })
+
+    const write = (data: string) => {
+      reply.raw.write(`data: ${data}\n\n`)
+    }
+
+    let assistantOutput = ''
+    try {
+      const provider = getRuntimeProviderFromEnv(firstMember.provider as ProviderName)
+      const systemPrompt = buildTaskChatSystemPrompt({
+        task: {
+          id: task.id,
+          objective: task.objective,
+          result: task.result,
+          error: task.error,
+          runVersion,
+        },
+        steps: steps.map(toTaskStepSnapshot),
+      })
+
+      for await (const chunk of provider.chat({
+        model: firstMember.model,
+        systemPrompt,
+        messages: buildTaskChatMessages(previousMessages, trimmedMessage),
+        temperature: 0.2,
+      })) {
+        if (chunk.delta) {
+          assistantOutput += chunk.delta
+        }
+        write(JSON.stringify({ delta: chunk.delta, done: chunk.done }))
+        if (chunk.done) break
+      }
+
+      appendTaskMessage(db, {
+        taskId: id,
+        runVersion,
+        role: 'assistant',
+        mode: 'chat',
+        content: assistantOutput.trim() || '（无输出）',
+      })
+      write('[DONE]')
+    } catch (err) {
+      const errMessage = err instanceof Error ? err.message : 'Internal server error'
+      write(JSON.stringify({ delta: '', done: true, error: errMessage }))
+    } finally {
+      reply.raw.end()
+    }
+  })
+
+  app.post<{ Params: { id: string }; Body: TaskMessageBody }>('/tasks/:id/continue', async (request, reply) => {
+    const { id } = request.params
+    const { message } = request.body
+    const instruction = message?.trim()
+    if (!instruction) {
+      return reply.status(400).send({ error: 'message is required and cannot be empty' })
+    }
+
+    const db = getDb()
+    const task = db.prepare<[string], TaskRow>(`SELECT * FROM tasks WHERE id = ?`).get(id)
+    if (!task) {
+      return reply.status(404).send({ error: `Task not found: ${id}` })
+    }
+    if (task.status !== 'completed' && task.status !== 'failed') {
+      return reply.status(409).send({ error: `Task ${id} is ${task.status}, only completed/failed tasks can continue` })
+    }
+
+    const teamMembers = parseTaskTeamMembers(task.team_members)
+    if (teamMembers.length === 0) {
+      return reply.status(400).send({ error: 'Task has no team members, cannot continue' })
+    }
+    for (const member of teamMembers) {
+      if (!isProviderName(member.provider)) {
+        return reply.status(400).send({ error: `Unknown provider: ${member.provider}` })
+      }
+    }
+
+    const steps = db
+      .prepare<[string], TaskStepRow>(
+        `SELECT * FROM task_steps WHERE task_id = ? ORDER BY run_version ASC, started_at ASC, id ASC`,
+      )
+      .all(id)
+    const threadMessages = listTaskMessages(db, id, 30)
+    const currentRunVersion = task.run_version ?? 1
+    const nextRunVersion = currentRunVersion + 1
+
+    appendTaskMessage(db, {
+      taskId: id,
+      runVersion: nextRunVersion,
+      role: 'user',
+      mode: 'continue',
+      content: instruction,
+    })
+
+    const continuationContext = buildContinuationContext({
+      task: {
+        id: task.id,
+        objective: task.objective,
+        result: task.result,
+        error: task.error,
+        runVersion: currentRunVersion,
+      },
+      steps: steps.map(toTaskStepSnapshot),
+      threadMessages,
+      instruction,
+    })
+
+    const now = Date.now()
+    db.prepare(`UPDATE tasks SET status = ?, run_version = ?, result = NULL, error = NULL, updated_at = ? WHERE id = ?`).run(
+      'planning',
+      nextRunVersion,
+      now,
+      id,
+    )
+
+    const snapshot = parseRegistrySnapshot(task.registry_snapshot)
+    void runOrchestration({
+      taskId: id,
+      objective: task.objective,
+      continuationContext,
+      runVersion: nextRunVersion,
+      teamMembersInput: teamMembers,
+      snapshot,
+    })
+
+    return reply.send({
+      ok: true,
+      taskId: id,
+      status: 'planning',
+      runVersion: nextRunVersion,
+    })
+  })
+
   // GET /api/tasks/:id/stream - SSE 实时推送 TaskExecutionEvent
   app.get<{ Params: { id: string } }>('/tasks/:id/stream', async (request, reply) => {
     const { id } = request.params
@@ -378,8 +618,8 @@ export async function tasksRoutes(app: FastifyInstance): Promise<void> {
       typeof origin === 'string' && /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)
 
     const task = db
-      .prepare<[string], { id: string; status: string; result: string | null; error: string | null }>(
-        `SELECT id, status, result, error FROM tasks WHERE id = ?`,
+      .prepare<[string], { id: string; status: string; run_version: number | null; result: string | null; error: string | null }>(
+        `SELECT id, status, run_version, result, error FROM tasks WHERE id = ?`,
       )
       .get(id)
     if (!task) {
@@ -410,6 +650,7 @@ export async function tasksRoutes(app: FastifyInstance): Promise<void> {
         JSON.stringify({
           type: eventType,
           taskId: id,
+          runVersion: task.run_version ?? 1,
           output: task.result ?? undefined,
           error: task.error ?? undefined,
           timestamp: Date.now(),

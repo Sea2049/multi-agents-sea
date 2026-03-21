@@ -5,16 +5,17 @@ import type { TaskPlan } from '../orchestrator/types.js'
 import { closeDb, getDb, initDb } from '../storage/db.js'
 import { persistTaskExecutionEvent } from '../tasks/runtime-store.js'
 
-function insertTask(taskId: string, overrides?: { status?: string; result?: string; error?: string }): void {
+function insertTask(taskId: string, overrides?: { status?: string; result?: string; error?: string; teamMembers?: Array<{ agentId: string; provider: string; model: string }>; runVersion?: number }): void {
   const now = Date.now()
   getDb().prepare(
-    `INSERT INTO tasks (id, status, kind, team_members, objective, result, error, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO tasks (id, status, kind, run_version, team_members, objective, result, error, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     taskId,
     overrides?.status ?? 'running',
     'orchestration',
-    JSON.stringify([]),
+    overrides?.runVersion ?? 1,
+    JSON.stringify(overrides?.teamMembers ?? []),
     'Test task objective',
     overrides?.result ?? null,
     overrides?.error ?? null,
@@ -125,6 +126,66 @@ describe('tasks routes state consistency', () => {
       type: 'task_failed',
       output: '# Task Report\n\nFallback report body',
       error: 'Step "step-2" timed out after 120000ms',
+    })
+  })
+
+  it('should reject continue when task is not in terminal state', async () => {
+    const taskId = 'task-route-running'
+    insertTask(taskId, {
+      status: 'running',
+      teamMembers: [{ agentId: 'agent-a', provider: 'minimax', model: 'mock-model' }],
+    })
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/tasks/${taskId}/continue`,
+      payload: { message: '继续执行后续步骤' },
+    })
+
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toMatchObject({
+      error: expect.stringContaining('only completed/failed tasks can continue'),
+    })
+  })
+
+  it('should bump runVersion and persist continue thread message', async () => {
+    const taskId = 'task-route-continue'
+    insertTask(taskId, {
+      status: 'completed',
+      result: '# Final result',
+      runVersion: 2,
+      teamMembers: [{ agentId: 'agent-a', provider: 'minimax', model: 'mock-model' }],
+    })
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/tasks/${taskId}/continue`,
+      payload: { message: '请继续扩展到实施清单' },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({
+      ok: true,
+      taskId,
+      runVersion: 3,
+    })
+
+    const taskResponse = await app.inject({
+      method: 'GET',
+      url: `/api/tasks/${taskId}`,
+    })
+    expect(taskResponse.statusCode).toBe(200)
+
+    const payload = taskResponse.json() as {
+      runVersion: number
+      threadMessages: Array<{ role: string; mode: string; runVersion: number; content: string }>
+    }
+    expect(payload.runVersion).toBe(3)
+    expect(payload.threadMessages.at(-1)).toMatchObject({
+      role: 'user',
+      mode: 'continue',
+      runVersion: 3,
+      content: '请继续扩展到实施清单',
     })
   })
 })

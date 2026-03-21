@@ -19,6 +19,8 @@ import { divisions } from '../../data/agents';
 interface ResultAggregatorProps {
   task: TaskRecord;
   onClose: () => void;
+  onContinue?: (message: string) => Promise<void>;
+  onChat?: (message: string) => Promise<string>;
   onReplay?: () => void;
   replayLabel?: string;
 }
@@ -131,8 +133,19 @@ function StepResultItem({ step }: { step: TaskStepRecord }) {
   );
 }
 
-export default function ResultAggregator({ task, onClose, onReplay, replayLabel = '重新运行' }: ResultAggregatorProps) {
+export default function ResultAggregator({
+  task,
+  onClose,
+  onContinue,
+  onChat,
+  onReplay,
+  replayLabel = '重新运行',
+}: ResultAggregatorProps) {
   const [showSteps, setShowSteps] = useState(false);
+  const [followupInput, setFollowupInput] = useState('');
+  const [followupBusy, setFollowupBusy] = useState<'chat' | 'continue' | null>(null);
+  const [followupError, setFollowupError] = useState<string | null>(null);
+  const [latestReply, setLatestReply] = useState<string | null>(null);
 
   const steps = useMemo(() => task.steps ?? [], [task.steps]);
 
@@ -154,6 +167,31 @@ export default function ResultAggregator({ task, onClose, onReplay, replayLabel 
   }, [steps]);
 
   const isSuccess = task.status === 'completed';
+  const threadMessages = task.threadMessages ?? [];
+
+  const handleFollowupAction = async (mode: 'chat' | 'continue') => {
+    const message = followupInput.trim();
+    if (!message) return;
+    if (mode === 'chat' && !onChat) return;
+    if (mode === 'continue' && !onContinue) return;
+
+    setFollowupBusy(mode);
+    setFollowupError(null);
+    try {
+      if (mode === 'chat' && onChat) {
+        const reply = await onChat(message);
+        setLatestReply(reply.trim() || '（无输出）');
+      } else if (mode === 'continue' && onContinue) {
+        await onContinue(message);
+        setLatestReply(null);
+      }
+      setFollowupInput('');
+    } catch (err) {
+      setFollowupError(err instanceof Error ? err.message : '操作失败');
+    } finally {
+      setFollowupBusy(null);
+    }
+  };
 
   return (
     <div className="space-y-5">
@@ -230,6 +268,70 @@ export default function ResultAggregator({ task, onClose, onReplay, replayLabel 
           <div className="rounded-[16px] border border-white/[0.05] bg-black/20 px-4 py-4">
             <MarkdownArticle markdown={task.result} />
           </div>
+        </section>
+      )}
+
+      {/* 后续互动 */}
+      {(onChat || onContinue) && (
+        <section className="panel-surface rounded-[24px] p-5 space-y-3.5">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-sm font-medium text-slate-200">后续互动</p>
+            {task.runVersion && (
+              <span className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] text-slate-400">
+                Run v{task.runVersion}
+              </span>
+            )}
+          </div>
+          <textarea
+            value={followupInput}
+            onChange={(event) => setFollowupInput(event.target.value)}
+            rows={3}
+            placeholder="继续提问结果，或输入下一步执行指令..."
+            className="w-full rounded-[14px] border border-white/[0.08] bg-black/20 px-3.5 py-3 text-sm text-slate-200 outline-none transition focus:border-blue-400/40"
+          />
+          {followupError && (
+            <p className="rounded-[12px] border border-red-400/20 bg-red-400/10 px-3 py-2 text-xs text-red-200">
+              {followupError}
+            </p>
+          )}
+          {latestReply && (
+            <div className="rounded-[12px] border border-emerald-400/20 bg-emerald-400/10 px-3 py-2.5">
+              <p className="mb-1 text-[10px] uppercase tracking-[0.16em] text-emerald-200/80">最新回复</p>
+              <p className="text-xs leading-5 text-emerald-100/90 whitespace-pre-wrap">{latestReply}</p>
+            </div>
+          )}
+          <div className="flex flex-wrap gap-2">
+            {onChat && (
+              <button
+                onClick={() => void handleFollowupAction('chat')}
+                disabled={followupBusy !== null || !followupInput.trim()}
+                className="interactive-lift rounded-full border border-blue-400/20 bg-blue-400/10 px-4 py-2 text-xs font-medium text-blue-200 transition hover:border-blue-400/35 hover:bg-blue-400/18 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {followupBusy === 'chat' ? '正在回复...' : '继续聊天'}
+              </button>
+            )}
+            {onContinue && (
+              <button
+                onClick={() => void handleFollowupAction('continue')}
+                disabled={followupBusy !== null || !followupInput.trim()}
+                className="interactive-lift rounded-full border border-amber-400/20 bg-amber-400/10 px-4 py-2 text-xs font-medium text-amber-200 transition hover:border-amber-400/35 hover:bg-amber-400/18 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {followupBusy === 'continue' ? '正在续跑...' : '继续执行'}
+              </button>
+            )}
+          </div>
+          {threadMessages.length > 0 && (
+            <div className="rounded-[14px] border border-white/[0.06] bg-black/20 px-3 py-2.5 space-y-2 max-h-[220px] overflow-y-auto">
+              {threadMessages.slice(-8).map((message) => (
+                <div key={message.id} className="text-xs leading-5">
+                  <p className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
+                    {message.role} · {message.mode} · run v{message.runVersion}
+                  </p>
+                  <p className="text-slate-300 whitespace-pre-wrap">{message.content}</p>
+                </div>
+              ))}
+            </div>
+          )}
         </section>
       )}
 

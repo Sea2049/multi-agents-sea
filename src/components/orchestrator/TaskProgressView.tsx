@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { AlertCircle, CheckCircle2, ChevronDown, ChevronRight, Clock, GitBranch, List, Loader2, LayoutGrid, X, Zap } from 'lucide-react';
 import {
@@ -106,16 +106,21 @@ function TaskProgressView({ taskId, onClose, onOpenTask }: TaskProgressViewProps
   const [streamError, setStreamError] = useState<string | null>(null);
   const [approvalBusyStepId, setApprovalBusyStepId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabKey>('overview');
+  const [streamEpoch, setStreamEpoch] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
+
+  const refreshTask = useCallback(async () => {
+    const record = await apiClient.tasks.get(taskId);
+    setTask(record);
+    setSteps(record.steps ?? []);
+  }, [taskId]);
 
   useEffect(() => {
     let isActive = true;
 
     setIsLoading(true);
-    apiClient.tasks.get(taskId).then((record) => {
+    refreshTask().then(() => {
       if (!isActive) return;
-      setTask(record);
-      setSteps(record.steps ?? []);
       setIsLoading(false);
     }).catch((err: unknown) => {
       if (!isActive) return;
@@ -126,7 +131,7 @@ function TaskProgressView({ taskId, onClose, onOpenTask }: TaskProgressViewProps
     return () => {
       isActive = false;
     };
-  }, [taskId]);
+  }, [refreshTask]);
 
   useEffect(() => {
     let isActive = true;
@@ -153,20 +158,26 @@ function TaskProgressView({ taskId, onClose, onOpenTask }: TaskProgressViewProps
       isActive = false;
       abortRef.current?.abort();
     };
-  }, [taskId]);
+  }, [taskId, streamEpoch]);
 
   const handleEvent = (event: TaskExecutionEvent) => {
     setTask((prev) => {
       if (!prev) return prev;
       switch (event.type) {
         case 'task_started':
-          return { ...prev, status: 'running' };
+          return { ...prev, status: 'running', runVersion: event.runVersion ?? prev.runVersion };
         case 'task_completed':
-          return { ...prev, status: 'completed', result: event.output ?? prev.result };
+          return {
+            ...prev,
+            status: 'completed',
+            runVersion: event.runVersion ?? prev.runVersion,
+            result: event.output ?? prev.result,
+          };
         case 'task_failed':
           return {
             ...prev,
             status: 'failed',
+            runVersion: event.runVersion ?? prev.runVersion,
             result: event.output ?? prev.result,
             error: event.error ?? prev.error,
           };
@@ -178,9 +189,15 @@ function TaskProgressView({ taskId, onClose, onOpenTask }: TaskProgressViewProps
     if (event.stepId) {
       setSteps((prev) => {
         const existing = prev.find((s) => s.id === event.stepId);
-        if (!existing) return prev;
-
-        const updated: TaskStepRecord = { ...existing };
+        const updated: TaskStepRecord = existing
+          ? { ...existing }
+          : {
+            id: event.stepId,
+            runVersion: event.runVersion,
+            agentId: event.agentId ?? 'unknown',
+            status: 'pending',
+            objective: event.stepId,
+          };
         if (event.type === 'step_started') {
           updated.status = 'running';
           updated.startedAt = event.timestamp;
@@ -201,6 +218,9 @@ function TaskProgressView({ taskId, onClose, onOpenTask }: TaskProgressViewProps
           updated.error = event.error;
           updated.completedAt = event.timestamp;
         }
+        if (!existing) {
+          return [...prev, updated];
+        }
         return prev.map((s) => (s.id === event.stepId ? updated : s));
       });
     }
@@ -208,6 +228,7 @@ function TaskProgressView({ taskId, onClose, onOpenTask }: TaskProgressViewProps
     // Auto-switch to result view when task finishes
     if (event.type === 'task_completed' || event.type === 'task_failed') {
       setActiveTab('overview');
+      void refreshTask().catch(() => undefined);
     }
   };
 
@@ -241,6 +262,28 @@ function TaskProgressView({ taskId, onClose, onOpenTask }: TaskProgressViewProps
     } catch (err) {
       setStreamError(err instanceof Error ? err.message : '重新运行 Pipeline 失败');
     }
+  };
+
+  const handleContinueTask = async (message: string) => {
+    setStreamError(null);
+    await apiClient.tasks.continueTask(taskId, message);
+    setEvents((prev) => prev.slice(-30));
+    await refreshTask();
+    setActiveTab('overview');
+    setStreamEpoch((prev) => prev + 1);
+  };
+
+  const handleFollowupChat = async (message: string): Promise<string> => {
+    setStreamError(null);
+    let output = '';
+    for await (const chunk of apiClient.tasks.chat(taskId, message)) {
+      if (chunk.error) {
+        throw new Error(chunk.error);
+      }
+      output += chunk.delta;
+    }
+    await refreshTask();
+    return output;
   };
 
   const taskStatusLabel = (status: string) => {
@@ -365,6 +408,8 @@ function TaskProgressView({ taskId, onClose, onOpenTask }: TaskProgressViewProps
                       <ResultAggregator
                         task={{ ...task, steps }}
                         onClose={onClose}
+                        onContinue={handleContinueTask}
+                        onChat={handleFollowupChat}
                         onReplay={task.kind === 'pipeline' && task.pipelineId ? () => void handleReplay() : undefined}
                         replayLabel="重新运行 Pipeline"
                       />

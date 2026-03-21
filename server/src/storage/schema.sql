@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   id TEXT PRIMARY KEY,
   status TEXT NOT NULL DEFAULT 'pending',
   kind TEXT NOT NULL DEFAULT 'orchestration',
+  run_version INTEGER NOT NULL DEFAULT 1,
   team_members TEXT NOT NULL,
   objective TEXT NOT NULL,
   plan TEXT,
@@ -45,6 +46,7 @@ CREATE TABLE IF NOT EXISTS tasks (
 CREATE TABLE IF NOT EXISTS task_steps (
   id TEXT PRIMARY KEY,
   task_id TEXT NOT NULL REFERENCES tasks(id),
+  run_version INTEGER NOT NULL DEFAULT 1,
   agent_id TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending',
   objective TEXT NOT NULL,
@@ -55,6 +57,17 @@ CREATE TABLE IF NOT EXISTS task_steps (
   started_at INTEGER,
   completed_at INTEGER
 );
+
+CREATE TABLE IF NOT EXISTS task_messages (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL REFERENCES tasks(id),
+  run_version INTEGER NOT NULL DEFAULT 1,
+  role TEXT NOT NULL,
+  mode TEXT NOT NULL DEFAULT 'chat',
+  content TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_task_messages_task_id ON task_messages(task_id, created_at);
 
 CREATE TABLE IF NOT EXISTS tool_calls (
   id TEXT PRIMARY KEY,

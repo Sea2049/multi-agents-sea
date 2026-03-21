@@ -81,9 +81,22 @@ function ensureProviderSettingsSchema(database: BetterSqlite3Database): void {
 
 function ensureTaskSchema(database: BetterSqlite3Database): void {
   ensureColumn(database, 'tasks', 'kind', `TEXT NOT NULL DEFAULT 'orchestration'`)
+  ensureColumn(database, 'tasks', 'run_version', 'INTEGER NOT NULL DEFAULT 1')
   ensureColumn(database, 'tasks', 'registry_snapshot', 'TEXT')
   ensureColumn(database, 'tasks', 'pipeline_id', 'TEXT')
   ensureColumn(database, 'tasks', 'pipeline_version', 'INTEGER')
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS task_messages (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL REFERENCES tasks(id),
+      run_version INTEGER NOT NULL DEFAULT 1,
+      role TEXT NOT NULL,
+      mode TEXT NOT NULL DEFAULT 'chat',
+      content TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_task_messages_task_id ON task_messages(task_id, created_at);
+  `)
 }
 
 function ensureSkillSchema(database: BetterSqlite3Database): void {
@@ -238,6 +251,9 @@ export function initDb(dbPath: string): BetterSqlite3Database {
   const existingColumnNames = new Set(taskStepColumns.map((c) => c.name))
   if (!existingColumnNames.has('summary')) {
     db.exec(`ALTER TABLE task_steps ADD COLUMN summary TEXT`)
+  }
+  if (!existingColumnNames.has('run_version')) {
+    db.exec(`ALTER TABLE task_steps ADD COLUMN run_version INTEGER NOT NULL DEFAULT 1`)
   }
 
   return db

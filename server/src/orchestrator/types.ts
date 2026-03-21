@@ -63,6 +63,7 @@ export interface TaskExecutionEvent {
     | 'tool_call_started'
     | 'tool_call_completed'
   taskId: string
+  runVersion?: number
   stepId?: string
   agentId?: string
   output?: string

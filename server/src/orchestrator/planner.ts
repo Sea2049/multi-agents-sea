@@ -42,6 +42,7 @@ export interface PlannerTeamMember {
 export interface PlannerParams {
   taskId: string
   objective: string
+  continuationContext?: string
   teamMembers: PlannerTeamMember[]
   provider: LLMProvider
   model: string
@@ -50,7 +51,7 @@ export interface PlannerParams {
 }
 
 export async function createPlan(params: PlannerParams): Promise<TaskPlan> {
-  const { taskId, objective, teamMembers, provider, model, snapshot, repairHints } = params
+  const { taskId, objective, continuationContext, teamMembers, provider, model, snapshot, repairHints } = params
 
   const teamJson = JSON.stringify(
     teamMembers.map((m) => ({
@@ -69,6 +70,10 @@ Objective: ${objective}
 
 Available Team Members:
 ${teamJson}`
+
+  if (continuationContext?.trim()) {
+    userPrompt += `\n\nContinuation Context:\n${continuationContext.trim()}`
+  }
 
   if (repairHints) {
     userPrompt += `\n\nPrevious plan had validation errors. Please fix them:\n${repairHints}`

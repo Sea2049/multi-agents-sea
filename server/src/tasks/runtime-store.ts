@@ -4,6 +4,7 @@ import type { TaskExecutionEvent, TaskPlan, TaskStatus } from '../orchestrator/t
 interface TaskStepWriteParams {
   taskId: string
   stepId: string
+  runVersion?: number
   agentId: string
   objective: string
   status: string
@@ -17,6 +18,7 @@ interface TaskStepWriteParams {
 interface TaskStepRow {
   id: string
   task_id: string
+  run_version: number | null
   agent_id: string
   status: string
   objective: string
@@ -28,6 +30,7 @@ interface TaskStepRow {
 }
 
 const sseClients = new Map<string, Set<(data: string) => void>>()
+const sseCleanupTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 function taskExists(taskId: string): boolean {
   const db = getDb()
@@ -35,13 +38,20 @@ function taskExists(taskId: string): boolean {
   return Boolean(row)
 }
 
-function toDbTaskStepId(taskId: string, stepId: string): string {
-  return `${taskId}:${stepId}`
+function toDbTaskStepId(taskId: string, stepId: string, runVersion = 1): string {
+  return `${taskId}:rv${runVersion}:${stepId}`
 }
 
 export function toClientTaskStepId(taskId: string, storedStepId: string): string {
-  const prefix = `${taskId}:`
-  return storedStepId.startsWith(prefix) ? storedStepId.slice(prefix.length) : storedStepId
+  const scopedPrefix = `${taskId}:rv`
+  if (storedStepId.startsWith(scopedPrefix)) {
+    const firstSeparator = storedStepId.indexOf(':', scopedPrefix.length)
+    if (firstSeparator !== -1 && firstSeparator + 1 < storedStepId.length) {
+      return storedStepId.slice(firstSeparator + 1)
+    }
+  }
+  const legacyPrefix = `${taskId}:`
+  return storedStepId.startsWith(legacyPrefix) ? storedStepId.slice(legacyPrefix.length) : storedStepId
 }
 
 export function broadcastTaskEvent(taskId: string, event: TaskExecutionEvent): void {
@@ -74,6 +84,33 @@ export function removeTaskSseSubscriber(taskId: string, send: (data: string) => 
 
 export function clearTaskSseSubscribers(taskId: string): void {
   sseClients.delete(taskId)
+}
+
+export function scheduleTaskSseCleanup(taskId: string, delayMs = 10_000): void {
+  const existing = sseCleanupTimers.get(taskId)
+  if (existing) {
+    clearTimeout(existing)
+  }
+  const timer = setTimeout(() => {
+    clearTaskSseSubscribers(taskId)
+    sseCleanupTimers.delete(taskId)
+  }, delayMs)
+  sseCleanupTimers.set(taskId, timer)
+}
+
+export function cancelTaskSseCleanup(taskId: string): void {
+  const timer = sseCleanupTimers.get(taskId)
+  if (!timer) {
+    return
+  }
+  clearTimeout(timer)
+  sseCleanupTimers.delete(taskId)
+}
+
+export function getTaskRunVersion(taskId: string): number {
+  const db = getDb()
+  const row = db.prepare<[string], { run_version: number | null }>(`SELECT run_version FROM tasks WHERE id = ?`).get(taskId)
+  return row?.run_version ?? 1
 }
 
 export function updateTaskStatus(
@@ -112,15 +149,17 @@ export function upsertTaskStep(params: TaskStepWriteParams): void {
   }
 
   const db = getDb()
-  const dbStepId = toDbTaskStepId(params.taskId, params.stepId)
+  const runVersion = params.runVersion ?? getTaskRunVersion(params.taskId)
+  const dbStepId = toDbTaskStepId(params.taskId, params.stepId, runVersion)
   const existing = db.prepare<[string], TaskStepRow>(`SELECT * FROM task_steps WHERE id = ?`).get(dbStepId)
   if (!existing) {
     db.prepare(
-      `INSERT INTO task_steps (id, task_id, agent_id, status, objective, result, error, summary, started_at, completed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO task_steps (id, task_id, run_version, agent_id, status, objective, result, error, summary, started_at, completed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       dbStepId,
       params.taskId,
+      runVersion,
       params.agentId,
       params.status,
       params.objective,
@@ -162,16 +201,19 @@ export function updateTaskStepSummary(taskId: string, stepId: string, summary: s
   }
 
   const db = getDb()
-  db.prepare(`UPDATE task_steps SET summary = ? WHERE id = ?`).run(summary, toDbTaskStepId(taskId, stepId))
+  const runVersion = getTaskRunVersion(taskId)
+  db.prepare(`UPDATE task_steps SET summary = ? WHERE id = ?`).run(summary, toDbTaskStepId(taskId, stepId, runVersion))
 }
 
-export function persistTaskExecutionEvent(taskId: string, plan: TaskPlan, event: TaskExecutionEvent): void {
+export function persistTaskExecutionEvent(taskId: string, plan: TaskPlan, event: TaskExecutionEvent, runVersion?: number): void {
   const lookupStep = event.stepId ? plan.steps.find((step) => step.id === event.stepId) : undefined
+  const scopedRunVersion = runVersion ?? getTaskRunVersion(taskId)
 
   if (event.type === 'step_started' && event.stepId) {
     upsertTaskStep({
       taskId,
       stepId: event.stepId,
+      runVersion: scopedRunVersion,
       agentId: event.agentId ?? lookupStep?.assignee ?? '',
       objective: lookupStep?.objective ?? '',
       status: 'running',
@@ -184,6 +226,7 @@ export function persistTaskExecutionEvent(taskId: string, plan: TaskPlan, event:
     upsertTaskStep({
       taskId,
       stepId: event.stepId,
+      runVersion: scopedRunVersion,
       agentId: event.agentId ?? lookupStep?.assignee ?? '',
       objective: lookupStep?.objective ?? '',
       status: 'pending_approval',
@@ -197,6 +240,7 @@ export function persistTaskExecutionEvent(taskId: string, plan: TaskPlan, event:
     upsertTaskStep({
       taskId,
       stepId: event.stepId,
+      runVersion: scopedRunVersion,
       agentId: event.agentId ?? lookupStep?.assignee ?? '',
       objective: lookupStep?.objective ?? '',
       status: 'completed',
@@ -210,6 +254,7 @@ export function persistTaskExecutionEvent(taskId: string, plan: TaskPlan, event:
     upsertTaskStep({
       taskId,
       stepId: event.stepId,
+      runVersion: scopedRunVersion,
       agentId: event.agentId ?? lookupStep?.assignee ?? '',
       objective: lookupStep?.objective ?? '',
       status: 'skipped',
@@ -223,6 +268,7 @@ export function persistTaskExecutionEvent(taskId: string, plan: TaskPlan, event:
     upsertTaskStep({
       taskId,
       stepId: event.stepId,
+      runVersion: scopedRunVersion,
       agentId: event.agentId ?? lookupStep?.assignee ?? '',
       objective: lookupStep?.objective ?? '',
       status: 'failed',
@@ -331,6 +377,7 @@ export function completeToolCall(params: {
 
 export function deleteTaskRuntime(taskId: string): void {
   const db = getDb()
+  db.prepare(`DELETE FROM task_messages WHERE task_id = ?`).run(taskId)
   db.prepare(`DELETE FROM tool_calls WHERE task_id = ?`).run(taskId)
   db.prepare(`DELETE FROM task_steps WHERE task_id = ?`).run(taskId)
   db.prepare(`DELETE FROM tasks WHERE id = ?`).run(taskId)
