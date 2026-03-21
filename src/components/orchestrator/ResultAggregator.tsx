@@ -74,7 +74,10 @@ function StepResultItem({ step }: { step: TaskStepRecord }) {
             )}
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-2">
-            <span className="text-[10px] text-slate-500">{agentInfo.name}</span>
+            <span className="text-[10px] text-slate-500">
+              {agentInfo.name}
+              {step.runVersion ? ` · run v${step.runVersion}` : ''}
+            </span>
             {step.tokenCount && (
               <span className="rounded border border-violet-400/20 bg-violet-400/10 px-1.5 py-0.5 text-[10px] text-violet-300">
                 {step.tokenCount.toLocaleString()} tokens

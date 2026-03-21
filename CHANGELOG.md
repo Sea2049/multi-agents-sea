@@ -2,6 +2,14 @@
 
 本仓库遵循 [语义化版本](https://semver.org/lang/zh-CN/)（SemVer）。未发布项写在 **Unreleased**。
 
+## [2.2.6] - 2026-03-21
+
+### 文档更新与版本固化
+
+- 将发布版本固化为 **V2.2.6**（包管理版本为 `2.2.6`）
+- 更新框架文档：[README.md](README.md)、[docs/FRAMEWORK.md](docs/FRAMEWORK.md)、[buildResources/README.md](buildResources/README.md)
+- 同步根包、`server/`、`shared/` 的 `package.json` 与根 / `server/` 的 `package-lock.json` 根条目版本到 `2.2.6`（不改动第三方依赖如 `json5@2.2.3`）
+
 ## [2.2.5] - 2026-03-21
 
 ### 文档更新与版本固化

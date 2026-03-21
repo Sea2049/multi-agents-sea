@@ -74,7 +74,10 @@ function StepCard({ step }: { step: TaskStepRecord }) {
               </button>
             )}
           </div>
-          <p className="mt-1 text-[11px] text-slate-500">{step.agentId}</p>
+          <p className="mt-1 text-[11px] text-slate-500">
+            {step.agentId}
+            {step.runVersion ? ` · run v${step.runVersion}` : ''}
+          </p>
         </div>
       </div>
 
