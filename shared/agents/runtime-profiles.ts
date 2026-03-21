@@ -1,7 +1,7 @@
 /**
  * Agent 运行时 profile — 由 scripts/build-agent-runtime-profiles.mjs 生成
  * 请勿手动编辑 — 运行 `npm run build:profiles` 重新生成
- * 生成时间：2026-03-21T06:43:57.561Z
+ * 生成时间：2026-03-21T06:58:47.741Z
  * Agents 数量：149
  */
 
